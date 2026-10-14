@@ -44,6 +44,9 @@ if(TISSUEMC_BUILD_TESTS)
   add_executable(tissuemc_tests
     tests/cpp/test_main.cpp
     tests/cpp/test_version.cpp
+    tests/cpp/test_accumulate.cpp
+    tests/cpp/test_philox.cpp
+    tests/cpp/test_physics.cpp
   )
   target_include_directories(tissuemc_tests PRIVATE ${doctest_SOURCE_DIR})
   target_link_libraries(tissuemc_tests PRIVATE tissuemc_cpu)
