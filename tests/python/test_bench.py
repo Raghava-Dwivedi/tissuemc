@@ -101,3 +101,45 @@ def test_scaling_plot_writes_a_png(tmp_path):
     plots.plot_scaling(data, out)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
     assert out.stat().st_size > 5000
+
+
+def _fake_gpu_run(events=1000, rd=0.24, kernel=2.0):
+    return {
+        "kernel_seconds": kernel,
+        "wall_seconds": kernel + 0.5,
+        "events": events,
+        "device": "Test GPU (sm_75)",
+        "tally_precision": "float64",
+        "summary": {"rd": {"mean": rd}, "tt": {"mean": 0.1}},
+    }
+
+
+def test_gpu_benchmark_summary(monkeypatch):
+    kernels = iter([9.0, 2.0, 4.0, 3.0])  # first is the warm-up
+    monkeypatch.setattr(bench, "_run_engine_json", lambda cmd: _fake_gpu_run(kernel=next(kernels)))
+    out = bench.run_gpu_benchmark(Path("x"), Path("y"), 1000, 10, repeats=3, warmup=1, seed=1)
+    assert out["kernel"]["median"] == 3.0
+    assert out["events_per_second"] == pytest.approx(1000 / 3.0)
+    assert out["photons_per_second"] == pytest.approx(1000 / 3.0)
+    assert out["device"] == "Test GPU (sm_75)"
+
+
+def test_gpu_benchmark_tolerates_atomic_rounding_but_not_real_differences(monkeypatch):
+    runs = iter([_fake_gpu_run(rd=0.24), _fake_gpu_run(rd=0.24 * (1 + 1e-12))])
+    monkeypatch.setattr(bench, "_run_engine_json", lambda cmd: next(runs))
+    bench.run_gpu_benchmark(Path("x"), Path("y"), 10, 2, repeats=2, warmup=0, seed=1)
+
+    runs = iter([_fake_gpu_run(events=1000), _fake_gpu_run(events=1001)])
+    monkeypatch.setattr(bench, "_run_engine_json", lambda cmd: next(runs))
+    with pytest.raises(SystemExit, match="event counts differ"):
+        bench.run_gpu_benchmark(Path("x"), Path("y"), 10, 2, repeats=2, warmup=0, seed=1)
+
+    runs = iter([_fake_gpu_run(rd=0.24), _fake_gpu_run(rd=0.2401)])
+    monkeypatch.setattr(bench, "_run_engine_json", lambda cmd: next(runs))
+    with pytest.raises(SystemExit, match="rd differs"):
+        bench.run_gpu_benchmark(Path("x"), Path("y"), 10, 2, repeats=2, warmup=0, seed=1)
+
+
+def test_gpu_info_is_empty_without_a_gpu_or_has_a_name():
+    info = bench.gpu_info()
+    assert info == {} or "gpu" in info or "nvcc" in info

@@ -7,6 +7,9 @@
 
 #include "tissuemc/config.hpp"
 #include "tissuemc/cpu_engine.hpp"
+#ifdef TISSUEMC_WITH_CUDA
+#include "tissuemc/cuda_engine.hpp"
+#endif
 #include "tissuemc/mci.hpp"
 #include "tissuemc/version.hpp"
 
@@ -46,6 +49,7 @@ int run_command(int argc, char **argv) {
     const std::string input = argv[2];
     tissuemc::EngineOptions opt;
     std::string output;
+    bool use_cuda = false;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         auto value = [&](const char *name) -> const char * {
@@ -74,6 +78,28 @@ int run_command(int argc, char **argv) {
                              p.c_str());
                 return 2;
             }
+        } else if (a == "--engine") {
+            const std::string e = value("--engine");
+            if (e == "cpu") {
+                use_cuda = false;
+            } else if (e == "cuda") {
+                use_cuda = true;
+            } else {
+                std::fprintf(stderr, "tissuemc: --engine must be cpu or cuda, got '%s'\n",
+                             e.c_str());
+                return 2;
+            }
+        } else if (a == "--gpu-tally") {
+            const std::string p = value("--gpu-tally");
+            if (p == "float64") {
+                opt.gpu_tally = tissuemc::TallyPrecision::Float64;
+            } else if (p == "float32") {
+                opt.gpu_tally = tissuemc::TallyPrecision::Float32;
+            } else {
+                std::fprintf(stderr, "tissuemc: --gpu-tally must be float64 or float32, got '%s'\n",
+                             p.c_str());
+                return 2;
+            }
         } else if (a == "--output") {
             output = value("--output");
         } else {
@@ -83,6 +109,13 @@ int run_command(int argc, char **argv) {
         }
     }
 
+#ifndef TISSUEMC_WITH_CUDA
+    if (use_cuda) {
+        std::fprintf(stderr, "tissuemc: this build has no CUDA support; configure with "
+                             "-DTISSUEMC_ENABLE_CUDA=ON\n");
+        return 2;
+    }
+#endif
     const auto runs = tissuemc::parse_mci_file(input);
     std::ofstream json;
     if (!output.empty()) {
@@ -95,12 +128,21 @@ int run_command(int argc, char **argv) {
     }
     int status = 0;
     for (size_t r = 0; r < runs.size(); ++r) {
+#ifdef TISSUEMC_WITH_CUDA
+        const tissuemc::RunResult res =
+            use_cuda ? tissuemc::run_cuda(runs[r], opt) : tissuemc::run_cpu(runs[r], opt);
+#else
         const tissuemc::RunResult res = tissuemc::run_cpu(runs[r], opt);
+#endif
         const auto rd = res.rd(), tt = res.tt(), ab = res.absorbed();
         const auto cons = res.conservation_residual();
         std::printf("run %zu: %llu photons, %zu batches, %.2f s (%s, %s)\n", r + 1,
                     static_cast<unsigned long long>(res.photons()), res.batches.size(),
                     res.wall_seconds, res.engine.c_str(), res.precision.c_str());
+        if (!res.device.empty()) {
+            std::printf("  device %s, kernel %.3f s, %s totals\n", res.device.c_str(),
+                        res.kernel_seconds, res.tally_precision.c_str());
+        }
         std::printf("  specular R_sp = %.6f\n", res.specular);
         std::printf("  diffuse  R_d  = %.6f +/- %.6f\n", rd.mean, rd.se);
         std::printf("  transmit T_t  = %.6f +/- %.6f\n", tt.mean, tt.se);

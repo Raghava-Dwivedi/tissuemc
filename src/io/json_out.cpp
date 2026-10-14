@@ -234,6 +234,15 @@ void write_json(const RunResult &run, std::ostream &out) {
     j.key("wall_seconds");
     j.num(run.wall_seconds);
     j.raw(",");
+    j.key("kernel_seconds");
+    j.num(run.kernel_seconds);
+    j.raw(",");
+    j.key("device");
+    j.str(run.device);
+    j.raw(",");
+    j.key("tally_precision");
+    j.str(run.tally_precision);
+    j.raw(",");
     j.key("events");
     j.integer(run.events());
     j.raw(",");

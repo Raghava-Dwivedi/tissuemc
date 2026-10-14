@@ -61,7 +61,14 @@ class CheckResult:
 
 
 def run_engine(
-    binary: Path, config: Path, photons: int, batches: int, seed: int, precision: str = "float64"
+    binary: Path,
+    config: Path,
+    photons: int,
+    batches: int,
+    seed: int,
+    precision: str = "float64",
+    engine: str = "cpu",
+    gpu_tally: str = "float64",
 ) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.json"
@@ -70,6 +77,8 @@ def run_engine(
             "--photons", str(photons), "--batches", str(batches),
             "--seed", str(seed), "--precision", precision, "--output", str(out),
         ]  # fmt: skip
+        if engine != "cpu":
+            cmd += ["--engine", engine, "--gpu-tally", gpu_tally]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise SystemExit(f"engine failed ({proc.returncode}): {proc.stderr.strip()}")
@@ -164,6 +173,18 @@ def main(argv: list[str] | None = None) -> int:
         default="float64",
         help="transport precision of the engine under test (default: float64)",
     )
+    ap.add_argument(
+        "--engine",
+        choices=["cpu", "cuda"],
+        default="cpu",
+        help="engine under test (cuda needs a build with TISSUEMC_ENABLE_CUDA)",
+    )
+    ap.add_argument(
+        "--gpu-tally",
+        choices=["float64", "float32"],
+        default="float64",
+        help="precision of the GPU's running totals; float32 is expected to fail conservation",
+    )
     ap.add_argument("--binary", type=Path, help="use this engine binary instead of building one")
     ap.add_argument("--report", type=Path, help="write all comparisons to this JSON file")
     args = ap.parse_args(argv)
@@ -179,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     seeds = [int(s) for s in args.seeds.split(",")]
 
-    print(f"engine precision: {args.precision}\n")
+    print(f"engine: {args.engine}, transport precision: {args.precision}\n")
     all_results: list[CheckResult] = []
     engine_agrees = True
     for name in names:
@@ -195,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.batches,
                 seed,
                 args.precision,
+                args.engine,
+                args.gpu_tally,
             )
             if not summary_matches_engine(run):
                 engine_agrees = False
@@ -219,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "case": r.case,
                         "seed": r.seed,
+                        "engine": args.engine,
                         "precision": args.precision,
                         "quantity": r.quantity,
                         "source": r.source,

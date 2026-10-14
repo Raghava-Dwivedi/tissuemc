@@ -57,6 +57,25 @@ jobs:
         # The single-threaded statistical tests add minutes under TSan and exercise no threading.
         run: ./build-tsan/tissuemc_tests --test-case="*thread*,*partition*,*reproducible*,*invariants*"
 
+  cuda-compile:
+    name: CUDA compile check (no GPU on the runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - name: Install the CUDA toolkit and a host compiler it supports
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-12 nvidia-cuda-toolkit
+      - name: Configure for the T4 (sm_75)
+        run: >
+          uv run cmake -S . -B build-cuda -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DTISSUEMC_ENABLE_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75
+          -DCMAKE_CUDA_HOST_COMPILER=g++-12 -DTISSUEMC_BUILD_TESTS=OFF
+      - name: Build (compile and link only; running needs a GPU)
+        run: uv run cmake --build build-cuda
+      - name: The binary reports the CUDA engine as built in
+        run: ./build-cuda/tissuemc --version
+
   lint:
     name: Format and lint
     runs-on: ubuntu-latest

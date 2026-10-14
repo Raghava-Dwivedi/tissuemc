@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "tissuemc/accumulate.hpp"
+#include "tissuemc/batching.hpp"
 #include "tissuemc/config.hpp"
 #include "tissuemc/physics.hpp"
 
@@ -143,8 +144,7 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
     const auto t0 = std::chrono::steady_clock::now();
 
     const uint64_t nb = static_cast<uint64_t>(opt.batches);
-    const uint64_t base = run.photons / nb;
-    const uint64_t extra = run.photons % nb; // the first `extra` batches get one more photon
+    const BatchPlan plan = BatchPlan::make(run.photons, nb);
 
     RunResult result;
     result.spec = run;
@@ -157,9 +157,6 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
     result.rd_r.assign(static_cast<size_t>(geo.nr), 0.0);
 
     // Batch b covers photon ids [first_of(b), first_of(b) + count_of(b)).
-    auto count_of = [&](uint64_t b) { return base + (b < extra ? 1 : 0); };
-    auto first_of = [&](uint64_t b) { return b * base + std::min(b, extra); };
-
     // Batches are independent: each has its own tally and its photons use streams keyed by
     // (seed, photon id). Workers claim batches from a shared counter in any order, and the
     // results are merged below in batch order, so the output does not depend on the thread count
@@ -175,8 +172,8 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
                 if (b >= nb) {
                     return;
                 }
-                outs[b] = use_float ? run_batch(geo_f, opt.seed, first_of(b), count_of(b))
-                                    : run_batch(geo, opt.seed, first_of(b), count_of(b));
+                outs[b] = use_float ? run_batch(geo_f, opt.seed, plan.first_of(b), plan.count_of(b))
+                                    : run_batch(geo, opt.seed, plan.first_of(b), plan.count_of(b));
             }
         } catch (...) {
             std::lock_guard<std::mutex> lock(failure_mutex);

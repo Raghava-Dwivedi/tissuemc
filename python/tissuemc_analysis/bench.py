@@ -81,6 +81,21 @@ def background_cpu_percent() -> float | None:
     return round(sum(values), 1) if values else None
 
 
+def gpu_info() -> dict:
+    """GPU model, driver and toolkit as reported by the machine; empty if there is no GPU."""
+    info: dict = {}
+    smi = _run(
+        ["nvidia-smi", "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"]
+    )
+    if smi:
+        name, driver, memory = (x.strip() for x in smi.splitlines()[0].split(","))
+        info.update({"gpu": name, "driver": driver, "gpu_memory": memory})
+    nvcc = _run(["nvcc", "--version"]).splitlines()
+    if nvcc:
+        info["nvcc"] = nvcc[-1]
+    return info
+
+
 def build_info(root: Path) -> dict:
     """Compiler, flags and source revision the binary was built from."""
     info: dict = {}
@@ -172,6 +187,79 @@ def run_benchmark(
     return {"results": results, "speedup_baseline_threads": base_threads}
 
 
+def run_gpu_benchmark(
+    binary: Path,
+    config: Path,
+    photons: int,
+    batches: int,
+    repeats: int,
+    warmup: int,
+    seed: int,
+    gpu_tally: str = "float64",
+) -> dict:
+    """Time the GPU engine. Transport is deterministic, so every repeat must agree.
+
+    Event counts must match exactly. The reflectance and transmittance sums are added with
+    atomics in an order that changes from run to run, so they must agree to rounding, not bitwise.
+    """
+    kernel, wall, runs = [], [], []
+    for i in range(warmup + repeats):
+        cmd = [
+            str(binary),
+            "run",
+            str(config),
+            "--photons",
+            str(photons),
+            "--batches",
+            str(batches),
+        ]
+        cmd += ["--seed", str(seed), "--engine", "cuda", "--gpu-tally", gpu_tally]
+        run = _run_engine_json(cmd)
+        runs.append(run)
+        if i >= warmup:
+            kernel.append(run["kernel_seconds"])
+            wall.append(run["wall_seconds"])
+        print(f"  run {i + 1}/{warmup + repeats}: kernel {run['kernel_seconds']:.3f} s")
+
+    first = runs[0]
+    for run in runs[1:]:
+        if run["events"] != first["events"]:
+            raise SystemExit("benchmark aborted: event counts differ between repeats")
+        for key in ("rd", "tt"):
+            a, b = first["summary"][key]["mean"], run["summary"][key]["mean"]
+            if abs(a - b) > 1e-9 * abs(a):
+                raise SystemExit(
+                    f"benchmark aborted: {key} differs between repeats beyond rounding ({a} vs {b})"
+                )
+    k = summarize(kernel)
+    events = first["events"]
+    return {
+        "device": first.get("device", ""),
+        "tally_precision": first.get("tally_precision", gpu_tally),
+        "events": events,
+        "kernel_seconds": kernel,
+        "wall_seconds": wall,
+        "kernel": k,
+        "photons_per_second": photons / k["median"],
+        "events_per_second": events / k["median"],
+        "summary": first["summary"],
+    }
+
+
+def cpu_reference(root: Path) -> dict | None:
+    """Single- and 12-thread throughput from the committed CPU benchmark, if present."""
+    path = root / "results" / "cpu-scaling.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    by_threads = {r["threads"]: r["events_per_second"] for r in data["results"]}
+    return {
+        "source": "results/cpu-scaling.json",
+        "workload": data["workload"],
+        "events_per_second_by_threads": by_threads,
+    }
+
+
 def _run_engine_json(cmd: list[str]) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.json"
@@ -195,7 +283,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--output", type=Path, default=Path("results/cpu-scaling.json"))
     ap.add_argument("--skip-validation", action="store_true", help="NOT for published numbers")
+    ap.add_argument("--engine", choices=["cpu", "cuda"], default="cpu", help="what to benchmark")
+    ap.add_argument(
+        "--gpu-tally", choices=["float64", "float32"], default="float64", help="GPU running totals"
+    )
     args = ap.parse_args(argv)
+    if args.engine == "cuda":
+        return main_gpu(args)
 
     threads = parse_threads(args.threads)
     if args.repeats < 1 or args.warmup < 0:
@@ -250,6 +344,57 @@ def main(argv: list[str] | None = None) -> int:
             f"{r['threads']:>8} {r['events_per_second'] / 1e6:>10.1f} "
             f"{r['speedup']:>8.2f} {r['efficiency']:>10.0%}"
         )
+    return 0
+
+
+def main_gpu(args: argparse.Namespace) -> int:
+    root = validate.find_root()
+    binary = args.binary or validate.ensure_built(root)
+    config = args.config or root / "configs" / "bench" / "tissue_g09.mci"
+    output = args.output
+    if output == Path("results/cpu-scaling.json"):
+        output = Path("results/gpu-r0.json")
+    validated = False
+    if not args.skip_validation:
+        print("Validating the GPU engine before measuring anything ...")
+        v_args = ["--binary", str(binary), "--photons", "1000000", "--engine", "cuda"]
+        v_args += ["--gpu-tally", args.gpu_tally]
+        if validate.main(v_args) != 0:
+            print("benchmark aborted: the GPU engine fails validation", file=sys.stderr)
+            return 1
+        validated = True
+    photons = args.photons if args.photons != 300_000 else 4_000_000
+    print(f"\nBenchmarking {config.name} on the GPU: {photons} photons, {args.batches} batches")
+    body = run_gpu_benchmark(
+        binary, config, photons, args.batches, args.repeats, args.warmup, args.seed, args.gpu_tally
+    )
+    data = {
+        "benchmark": "gpu-r0",
+        "workload": config.name,
+        "photons": photons,
+        "batches": args.batches,
+        "seed": args.seed,
+        "repeats": args.repeats,
+        "warmup": args.warmup,
+        "validated_before_measuring": validated,
+        "hardware": {**hardware_info(), **gpu_info()},
+        "build": build_info(root),
+        "engine_version": _run([str(binary), "--version"]),
+        "cpu_reference": cpu_reference(root),
+        "notes": [
+            "Rung R0: one thread per photon, float32 transport, global atomic tallies.",
+            "Throughput uses kernel time (CUDA events) and excludes setup and copies.",
+            "The CPU reference is a different machine; the comparison is context, not a "
+            "like-for-like speedup.",
+        ],
+        **body,
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(data, indent=1) + "\n")
+    print(f"\nwrote {output}")
+    print(
+        f"{data['device']}: {data['events_per_second'] / 1e6:.1f} million events/s (median kernel)"
+    )
     return 0
 
 

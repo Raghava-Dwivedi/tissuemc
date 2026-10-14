@@ -2,12 +2,12 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated and benchmarked. The CUDA engine and the GPU optimization study are not started; no GPU results are claimed. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) is written and its per-photon kernel body is tested against the CPU engine on the host, but it has **not been run on a GPU yet**: no GPU results are claimed. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
 - a multithreaded C++ CPU engine (float64), **done**, and
-- a CUDA engine (float32), **planned**.
+- a CUDA engine (float32 transport), **rung R0 written, not yet run on a GPU** (see [`docs/rungs/R0.md`](docs/rungs/R0.md) and [`LOG.md`](LOG.md)).
 
 Both engines share one physics code path (`include/tissuemc/physics.hpp`). Nothing is benchmarked until it passes validation against published reference values. [`docs/DESIGN.md`](docs/DESIGN.md) has the full design.
 

@@ -38,6 +38,9 @@ struct RunResult {
     std::vector<double> a_z;  // absorbed weight per depth bin (summed over all photons)
     std::vector<double> rd_r; // diffuse reflectance weight per radial bin
     double wall_seconds = 0;
+    double kernel_seconds = 0;               // GPU kernel time alone (0 for the CPU engine)
+    std::string device;                      // GPU model, empty for the CPU engine
+    std::string tally_precision = "float64"; // precision of the running totals
 
     uint64_t photons() const;
     uint64_t events() const;
