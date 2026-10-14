@@ -78,7 +78,7 @@ Each photon packet carries a weight *W* that starts at 1 − R_sp, where R_sp is
    - One that transmits out of the bottom is scored as **transmittance**.
    - This is MCML's default, non-split boundary scheme.
 3. **Absorb ("drop").** Deposit ΔW = W·μa/μt into the absorption tally at the photon's position, then set W ← W − ΔW.
-4. **Scatter ("spin").** Sample the deflection angle from the Henyey–Greenstein phase function, with the azimuth uniform in [0, 2π). Then update the direction cosines.
+4. **Scatter ("spin").** Sample the deflection angle from the Henyey–Greenstein phase function, with the azimuth uniform in [0, 2π). Then update the direction cosines and renormalize them. MCML's rotation formula does not preserve vector length when the input is slightly off, and it amplifies the error for |u_z| above about 0.6: harmless in float64 (worst measured |norm² − 1| of 6.6e-9 over 1.8e8 events) but not in float32. Renormalizing costs one square root and leaves the model unchanged.
 5. **Russian roulette.** If W < W_th = 10⁻⁴, the photon survives with probability 1/m (m = 10) and its weight becomes m·W; otherwise it dies. Constants are from MCML manual Table 5.1 (WEIGHT = 1×10⁻⁴, CHANCE = 0.1). Roulette is *unbiased*: the expected weight is unchanged.
 
 **Tallies** (MCML definitions):
@@ -105,8 +105,10 @@ Source: MCML manual (Wang & Jacques), Chapter 6. Verified against the primary PD
 | Case | Medium | Published reference |
 |---|---|---|
 | **V1**, Table 6.1 | Slab: n = 1 (matched), μa = 10, μs = 90 cm⁻¹, g = 0.75, d = 0.02 cm | R_d: van de Hulst 0.09739; MCML 0.09734 ± 0.00035 · T_t: van de Hulst 0.66096; MCML 0.66096 ± 0.00020 |
-| **V2**, Table 6.2 | Semi-infinite: n = 1.5, μa = 10, μs = 90 cm⁻¹, g = 0 | R_d: Giovanelli 0.2600; MCML 0.25907 ± 0.00170; Prahl 0.26079 ± 0.00079 |
+| **V2**, Table 6.2 | Semi-infinite: n = 1.5, μa = 10, μs = 90 cm⁻¹, g = 0 | **Total** reflectance R_d + R_sp (R_sp = 0.04): Giovanelli 0.2600; MCML 0.25907 ± 0.00170; Prahl 0.26079 ± 0.00079. See the note below |
 | **V3**, Tables 6.6/6.7 | Three-layer tissue, n = 1.37, ambient 1.0. Layers: (μa 1, μs 100, g 0.9, 0.1 cm), (1, 10, 0, 0.1 cm), (2, 10, 0.7, 0.2 cm) | R_d: MCML 0.2375; Gardner 0.2381 · T_t: MCML 0.0965; Gardner 0.0974. **No standard errors published**, so V3 uses a looser, documented tolerance |
+
+**Note on V2.** The three values in Table 6.2 are total reflectance (diffuse plus specular), not diffuse alone, even though the table is described as diffuse reflectance. The evidence is the independent oracle in §5.6, which gives 0.2197 diffuse and 0.2597 total for this medium; all three published values sit near 0.26. Tables 6.1 and 6.7 are diffuse-only (Table 6.7 matches this implementation's diffuse reflectance, not its total).
 
 **Why these three cases:**
 - V1 tests anisotropic scattering and a matched boundary. Its T_t includes the unscattered light, exp(−2) ≈ 0.13534.
@@ -147,7 +149,18 @@ It also serves as the single-threaded CPU baseline.
 
 The CPU (float64) and GPU (float32) engines share the same counter-based random number generator, keyed by photon ID. So both simulate *the same photons*, and their aggregate results must agree within statistical error. This catches GPU-specific bugs that a test against the published tables alone might hide.
 
-**Rule:** no throughput number is recorded for any engine or optimization step unless V1–V3 pass on that exact build. The benchmark harness enforces this.
+### 5.6 Independent analytic oracle
+
+For a semi-infinite, isotropically scattering medium, the reflectance has a first-principles solution (Chandrasekhar's H-function, plus a boundary recursion for a refractive-index mismatch). It lives in `python/tissuemc_analysis/oracle.py`, shares no code or modelling choices with the engine, and is tested against identities that follow from the integral equation.
+
+It supplies two reference values that depend on no published table:
+
+| Case | Medium | Oracle value |
+|---|---|---|
+| **O1** | Matched boundary (n = 1), μa = 10, μs = 90 cm⁻¹, g = 0 | R_d = 0.414947 |
+| V2 (extra check) | n = 1.5, same medium | R_d = 0.219704 (diffuse); 0.259704 total |
+
+**Rule:** no throughput number is recorded for any engine or optimization step unless V1–V3 and O1 pass on that exact build. The benchmark harness enforces this.
 
 ## 6. GPU optimization ladder
 

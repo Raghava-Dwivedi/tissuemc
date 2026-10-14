@@ -1,0 +1,14 @@
+1.0                 # file version
+1                   # number of runs
+
+### Validation case O1: matched-boundary, semi-infinite, isotropic medium.
+### No published table: the reference comes from the H-function calculation in
+### python/tissuemc_analysis/oracle.py.
+o1_semi_infinite_matched.mco A  # output filename, ASCII
+1000000             # number of photons
+0.01 0.01           # dz, dr [cm]
+40 50 1             # number of dz, dr and da bins
+1                   # number of layers
+1.0                 # n above
+1.0 10 90 0 1e8     # n mua[1/cm] mus[1/cm] g d[cm]  (1e8 cm approximates semi-infinite)
+1.0                 # n below

@@ -130,6 +130,15 @@ template <class Real> TMC_HD void spin(Photon<Real> &p, Real g, PhotonRng &rng) 
         p.uy = sint * (uy * uz * cosp + ux * sinp) / temp + uy * cost;
         p.uz = -sint * cosp * temp + uz * cost;
     }
+    // MCML's rotation formula uses sqrt(1 - uz^2) in place of sqrt(ux^2 + uy^2). That is exact for
+    // a unit vector but does not preserve the length of a slightly non-unit one, and for |uz|
+    // above ~0.6 it amplifies the error instead of damping it. In double the effect is invisible
+    // (worst measured |norm^2 - 1| was 6.6e-9 over 1.8e8 events), but float32 rounding is ~1e9
+    // times larger, so renormalize after every event. One sqrt; the model is unchanged.
+    const Real inv_norm = Real(1) / m::sqrt(p.ux * p.ux + p.uy * p.uy + p.uz * p.uz);
+    p.ux *= inv_norm;
+    p.uy *= inv_norm;
+    p.uz *= inv_norm;
 }
 
 // Choose the next step. A fresh step is s = -ln(xi) / mu_t; a step interrupted at a boundary
@@ -195,6 +204,10 @@ TMC_HD void cross_or_not(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &
         r = (-p.uz <= L.cos_crit_top) ? Real(1) : fresnel(ni, nt, -p.uz, uz1);
         if (uniform<Real>(rng) > r) {
             if (p.layer == 0) {
+                // The exit direction is refracted like any other crossing, so scale the lateral
+                // components too and keep (ux, uy, uz) a unit vector at the moment of scoring.
+                p.ux *= ni / nt;
+                p.uy *= ni / nt;
                 p.uz = -uz1;
                 tally.score_reflectance(p, geo, p.w);
                 p.dead = true;
@@ -213,6 +226,8 @@ TMC_HD void cross_or_not(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &
         r = (p.uz <= L.cos_crit_bottom) ? Real(1) : fresnel(ni, nt, p.uz, uz1);
         if (uniform<Real>(rng) > r) {
             if (last) {
+                p.ux *= ni / nt;
+                p.uy *= ni / nt;
                 p.uz = uz1;
                 tally.score_transmittance(p, geo, p.w);
                 p.dead = true;

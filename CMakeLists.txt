@@ -25,8 +25,12 @@ add_library(tissuemc_core INTERFACE)
 target_include_directories(tissuemc_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(tissuemc_core INTERFACE TISSUEMC_VERSION="${PROJECT_VERSION}")
 
-add_library(tissuemc_cpu INTERFACE)
-target_link_libraries(tissuemc_cpu INTERFACE tissuemc_core Threads::Threads)
+add_library(tissuemc_cpu STATIC
+  src/io/mci.cpp
+  src/io/json_out.cpp
+  src/cpu/engine.cpp
+)
+target_link_libraries(tissuemc_cpu PUBLIC tissuemc_core Threads::Threads)
 
 add_executable(tissuemc src/cli/main.cpp)
 target_link_libraries(tissuemc PRIVATE tissuemc_cpu)
@@ -47,6 +51,8 @@ if(TISSUEMC_BUILD_TESTS)
     tests/cpp/test_accumulate.cpp
     tests/cpp/test_philox.cpp
     tests/cpp/test_physics.cpp
+    tests/cpp/test_mci.cpp
+    tests/cpp/test_engine.cpp
   )
   target_include_directories(tissuemc_tests PRIVATE ${doctest_SOURCE_DIR})
   target_link_libraries(tissuemc_tests PRIVATE tissuemc_cpu)

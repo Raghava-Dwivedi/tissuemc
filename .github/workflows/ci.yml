@@ -25,6 +25,8 @@ jobs:
         run: uv run ctest --test-dir build --output-on-failure
       - name: Python tests
         run: uv run pytest -q
+      - name: Validation suite (published values and independent oracle)
+        run: uv run tissuemc-validate --binary build/tissuemc
 
   sanitizers:
     name: ASan + UBSan

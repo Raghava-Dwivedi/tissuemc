@@ -129,6 +129,30 @@ TEST_CASE("spin keeps the direction a unit vector and scatters by mean cosine g"
     CHECK(std::fabs(sum_cos / n - g) < 5e-3);
 }
 
+// Regression guard for the direction-norm drift described in spin(): a long unbroken chain of
+// scattering events must not let the direction vector walk away from unit length.
+template <class Real> double worst_norm_error_over_long_walk(Real g, long events) {
+    PhotonRng rng(5, 1);
+    Photon<Real> p{};
+    p.ux = Real(0.6), p.uy = Real(0), p.uz = Real(0.8);
+    double worst = 0;
+    for (long i = 0; i < events; ++i) {
+        spin(p, g, rng);
+        const double ux = p.ux, uy = p.uy, uz = p.uz;
+        worst = std::fmax(worst, std::fabs(std::sqrt(ux * ux + uy * uy + uz * uz) - 1.0));
+    }
+    return worst;
+}
+
+TEST_CASE("direction stays a unit vector over millions of consecutive scatterings") {
+    // g = 0.99 keeps the direction close to its previous value, which is the regime where the
+    // unnormalized rotation formula was seen to amplify error.
+    CHECK(worst_norm_error_over_long_walk<double>(0.0, 4'000'000) < 1e-13);
+    CHECK(worst_norm_error_over_long_walk<double>(0.99, 4'000'000) < 1e-13);
+    CHECK(worst_norm_error_over_long_walk<float>(0.0f, 4'000'000) < 5e-7);
+    CHECK(worst_norm_error_over_long_walk<float>(0.99f, 4'000'000) < 5e-7);
+}
+
 TEST_CASE("step lengths are exponential with mean 1 / mu_t") {
     const auto geo = make_geometry<double>(single_layer(1.0, 10, 90, 0.75, 1e6));
     PhotonRng rng(3, 0);

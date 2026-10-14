@@ -1,0 +1,51 @@
+{
+  "description": "Reference values for the validation suite. Published values are transcribed from L. Wang and S. L. Jacques, 'Monte Carlo Modeling of Light Transport in Multi-layered Tissues in Standard C' (the MCML manual), chapter 6, and were checked against the manual's PDF. A reference with 'se' carries a published standard error. One with 'n_photons' and no 'se' came without one, so its standard error is estimated from ours scaled by the photons behind it. 'decimals' is the number of decimals printed, which gives a rounding allowance of half a unit in the last place. Entries with 'oracle' are computed by python/tissuemc_analysis/oracle.py.",
+  "cases": {
+    "v1_slab": {
+      "title": "V1: slab with matched boundary (MCML manual Table 6.1)",
+      "config": "validation/v1_slab.mci",
+      "photons": 4000000,
+      "checks": [
+        {"quantity": "rd", "source": "van de Hulst 1980 (Table 6.1)", "value": 0.09739, "decimals": 5},
+        {"quantity": "rd", "source": "MCML (Table 6.1)", "value": 0.09734, "se": 0.00035},
+        {"quantity": "rd", "source": "Prahl et al. 1989 (Table 6.1)", "value": 0.09711, "se": 0.00033},
+        {"quantity": "tt", "source": "van de Hulst 1980 (Table 6.1)", "value": 0.66096, "decimals": 5},
+        {"quantity": "tt", "source": "MCML (Table 6.1)", "value": 0.66096, "se": 0.00020},
+        {"quantity": "tt", "source": "Prahl et al. 1989 (Table 6.1)", "value": 0.66159, "se": 0.00049}
+      ]
+    },
+    "v2_semi_infinite": {
+      "title": "V2: semi-infinite, n = 1.5, isotropic (MCML manual Table 6.2)",
+      "config": "validation/v2_semi_infinite.mci",
+      "photons": 4000000,
+      "note": "The Table 6.2 values match the TOTAL reflectance (diffuse + specular, Rsp = 0.04), not the diffuse part alone: the independent oracle gives 0.2197 diffuse and 0.2597 total, and all three published values sit near 0.26. Tables 6.1 and 6.7 are diffuse-only.",
+      "checks": [
+        {"quantity": "rd_plus_specular", "source": "Giovanelli 1955 (Table 6.2)", "value": 0.2600, "decimals": 4},
+        {"quantity": "rd_plus_specular", "source": "MCML (Table 6.2)", "value": 0.25907, "se": 0.00170},
+        {"quantity": "rd_plus_specular", "source": "Prahl et al. 1989 (Table 6.2)", "value": 0.26079, "se": 0.00079},
+        {"quantity": "rd", "source": "H-function oracle (diffuse)", "oracle": "semi_infinite_isotropic"},
+        {"quantity": "rd_plus_specular", "source": "H-function oracle (total)", "oracle": "semi_infinite_isotropic"}
+      ]
+    },
+    "o1_semi_infinite_matched": {
+      "title": "O1: semi-infinite, matched boundary, isotropic (H-function oracle)",
+      "config": "validation/o1_semi_infinite_matched.mci",
+      "photons": 4000000,
+      "checks": [
+        {"quantity": "rd", "source": "H-function oracle", "oracle": "semi_infinite_isotropic"}
+      ]
+    },
+    "v3_three_layer": {
+      "title": "V3: three-layer tissue (MCML manual Tables 6.6 and 6.7)",
+      "config": "validation/v3_three_layer.mci",
+      "photons": 4000000,
+      "note": "Table 6.7 gives no standard errors, so the published values' errors are estimated from ours scaled by the photons behind each: 1,000,000 for MCML and 100,000 for Gardner.",
+      "checks": [
+        {"quantity": "rd", "source": "Gardner et al. 1992 (Table 6.7)", "value": 0.2381, "decimals": 4, "n_photons": 100000},
+        {"quantity": "rd", "source": "MCML (Table 6.7)", "value": 0.2375, "decimals": 4, "n_photons": 1000000},
+        {"quantity": "tt", "source": "Gardner et al. 1992 (Table 6.7)", "value": 0.0974, "decimals": 4, "n_photons": 100000},
+        {"quantity": "tt", "source": "MCML (Table 6.7)", "value": 0.0965, "decimals": 4, "n_photons": 1000000}
+      ]
+    }
+  }
+}

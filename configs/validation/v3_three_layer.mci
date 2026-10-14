@@ -1,0 +1,14 @@
+1.0                 # file version
+1                   # number of runs
+
+### Validation case V3: MCML manual, Tables 6.6 and 6.7 (three-layer tissue)
+v3_three_layer.mco A  # output filename, ASCII
+1000000             # number of photons
+0.01 0.01           # dz, dr [cm]
+40 50 1             # number of dz, dr and da bins
+3                   # number of layers
+1.0                 # n above
+1.37 1 100 0.9 0.1  # layer 1: n mua[1/cm] mus[1/cm] g d[cm]
+1.37 1 10 0 0.1     # layer 2
+1.37 2 10 0.7 0.2   # layer 3
+1.0                 # n below

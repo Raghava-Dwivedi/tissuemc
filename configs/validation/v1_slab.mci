@@ -1,0 +1,12 @@
+1.0                 # file version
+1                   # number of runs
+
+### Validation case V1: MCML manual, Table 6.1 (matched boundary, anisotropic slab)
+v1_slab.mco A       # output filename, ASCII
+1000000             # number of photons
+0.002 0.01          # dz, dr [cm]
+10 50 1             # number of dz, dr and da bins
+1                   # number of layers
+1.0                 # n above
+1.0 10 90 0.75 0.02 # n mua[1/cm] mus[1/cm] g d[cm]
+1.0                 # n below

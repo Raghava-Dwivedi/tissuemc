@@ -1,0 +1,12 @@
+1.0                 # file version
+1                   # number of runs
+
+### Validation case V2: MCML manual, Table 6.2 (semi-infinite, mismatched boundary, isotropic)
+v2_semi_infinite.mco A  # output filename, ASCII
+1000000             # number of photons
+0.01 0.01           # dz, dr [cm]
+40 50 1             # number of dz, dr and da bins
+1                   # number of layers
+1.0                 # n above
+1.5 10 90 0 1e8     # n mua[1/cm] mus[1/cm] g d[cm]  (1e8 cm approximates semi-infinite)
+1.0                 # n below
