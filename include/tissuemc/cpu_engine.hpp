@@ -10,7 +10,7 @@ namespace tissuemc {
 struct EngineOptions {
     uint64_t seed = 1;
     int batches = 10;
-    int threads = 1;
+    int threads = 1;      // 0 = one per hardware thread
     uint64_t photons = 0; // if nonzero, overrides the photon count in the run description
 };
 

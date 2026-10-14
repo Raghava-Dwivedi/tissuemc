@@ -115,10 +115,48 @@ TEST_CASE("bad engine options are rejected with clear errors") {
     o.batches = 11;
     CHECK_THROWS_AS(run_cpu(run, o), ConfigError);
     o.batches = 2;
-    o.threads = 4;
+    o.threads = -1;
+    CHECK_THROWS_AS(run_cpu(run, o), ConfigError);
+    o.threads = 5000;
     CHECK_THROWS_AS(run_cpu(run, o), ConfigError);
     RunSpec invalid = run;
     invalid.layers[0].g = 1.0;
     o.threads = 1;
     CHECK_THROWS_AS(run_cpu(invalid, o), ConfigError);
+}
+
+TEST_CASE("results are bitwise identical for any number of threads") {
+    const RunSpec run = load("v3_three_layer.mci");
+    EngineOptions base;
+    base.photons = 60'000;
+    base.batches = 24;
+    base.threads = 1;
+    const RunResult ref = run_cpu(run, base);
+    for (int threads : {2, 3, 8, 24, 0}) {
+        EngineOptions o = base;
+        o.threads = threads;
+        const RunResult r = run_cpu(run, o);
+        CAPTURE(threads);
+        REQUIRE(r.batches.size() == ref.batches.size());
+        for (size_t b = 0; b < ref.batches.size(); ++b) {
+            CHECK(r.batches[b].rd == ref.batches[b].rd);
+            CHECK(r.batches[b].tt == ref.batches[b].tt);
+            CHECK(r.batches[b].absorbed == ref.batches[b].absorbed);
+            CHECK(r.batches[b].events == ref.batches[b].events);
+        }
+        CHECK(r.a_z == ref.a_z);
+        CHECK(r.rd_r == ref.rd_r);
+    }
+}
+
+TEST_CASE("the thread count in the result is the number actually used") {
+    EngineOptions o;
+    o.photons = 1000;
+    o.batches = 3;
+    o.threads = 8; // never more workers than batches
+    CHECK(run_cpu(absorbing_slab(), o).threads == 3);
+    o.threads = 0;
+    const int used = run_cpu(absorbing_slab(), o).threads;
+    CHECK(used >= 1);
+    CHECK(used <= 3);
 }

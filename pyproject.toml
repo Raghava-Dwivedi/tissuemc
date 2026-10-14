@@ -13,9 +13,11 @@ plots = ["matplotlib>=3.8"]
 
 [project.scripts]
 tissuemc-validate = "tissuemc_analysis.validate:main"
+tissuemc-bench = "tissuemc_analysis.bench:main"
+tissuemc-plot = "tissuemc_analysis.plots:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "cmake>=3.24", "ninja>=1.11", "clang-format>=18"]
+dev = ["pytest>=8", "ruff>=0.6", "cmake>=3.24", "ninja>=1.11", "clang-format>=18", "matplotlib>=3.8"]
 
 [build-system]
 requires = ["hatchling>=1.24"]

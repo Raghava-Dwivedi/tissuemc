@@ -1,8 +1,12 @@
 #include "tissuemc/cpu_engine.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <exception>
+#include <mutex>
+#include <thread>
 
 #include "tissuemc/accumulate.hpp"
 #include "tissuemc/config.hpp"
@@ -113,9 +117,16 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
     if (static_cast<uint64_t>(opt.batches) > run.photons) {
         throw ConfigError("batches cannot exceed the number of photons");
     }
-    if (opt.threads != 1) {
-        throw ConfigError("only threads = 1 is supported by this engine version");
+    constexpr int kMaxThreads = 1024;
+    if (opt.threads < 0 || opt.threads > kMaxThreads) {
+        throw ConfigError("threads must be in [0, " + std::to_string(kMaxThreads) +
+                          "] (0 = one per hardware thread)");
     }
+    int threads = opt.threads;
+    if (threads == 0) {
+        threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()));
+    }
+    threads = std::min(threads, opt.batches); // a thread with no batch would only idle
 
     const auto t0 = std::chrono::steady_clock::now();
 
@@ -128,23 +139,63 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
     result.engine = "cpu";
     result.precision = "float64";
     result.seed = opt.seed;
-    result.threads = opt.threads;
+    result.threads = threads;
     result.specular = specular_reflectance(geo);
     result.a_z.assign(static_cast<size_t>(geo.nz), 0.0);
     result.rd_r.assign(static_cast<size_t>(geo.nr), 0.0);
 
-    uint64_t first = 0;
+    // Batch b covers photon ids [first_of(b), first_of(b) + count_of(b)).
+    auto count_of = [&](uint64_t b) { return base + (b < extra ? 1 : 0); };
+    auto first_of = [&](uint64_t b) { return b * base + std::min(b, extra); };
+
+    // Batches are independent: each has its own tally and its photons use streams keyed by
+    // (seed, photon id). Workers claim batches from a shared counter in any order, and the
+    // results are merged below in batch order, so the output does not depend on the thread count
+    // or on scheduling.
+    std::vector<BatchOutput> outs(nb);
+    std::atomic<uint64_t> next_batch{0};
+    std::exception_ptr failure;
+    std::mutex failure_mutex;
+    auto worker = [&]() {
+        try {
+            for (;;) {
+                const uint64_t b = next_batch.fetch_add(1, std::memory_order_relaxed);
+                if (b >= nb) {
+                    return;
+                }
+                outs[b] = run_batch(geo, opt.seed, first_of(b), count_of(b));
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(failure_mutex);
+            if (!failure) {
+                failure = std::current_exception();
+            }
+            next_batch.store(nb, std::memory_order_relaxed); // stop the other workers early
+        }
+    };
+    {
+        std::vector<std::thread> pool;
+        pool.reserve(static_cast<size_t>(threads - 1));
+        for (int t = 1; t < threads; ++t) {
+            pool.emplace_back(worker);
+        }
+        worker(); // the calling thread works too
+        for (auto &th : pool) {
+            th.join();
+        }
+    }
+    if (failure) {
+        std::rethrow_exception(failure);
+    }
+
     for (uint64_t b = 0; b < nb; ++b) {
-        const uint64_t count = base + (b < extra ? 1 : 0);
-        BatchOutput out = run_batch(geo, opt.seed, first, count);
-        for (size_t i = 0; i < out.az.size(); ++i) {
-            result.a_z[i] += out.az[i];
+        for (size_t i = 0; i < outs[b].az.size(); ++i) {
+            result.a_z[i] += outs[b].az[i];
         }
-        for (size_t i = 0; i < out.rr.size(); ++i) {
-            result.rd_r[i] += out.rr[i];
+        for (size_t i = 0; i < outs[b].rr.size(); ++i) {
+            result.rd_r[i] += outs[b].rr[i];
         }
-        result.batches.push_back(std::move(out.result));
-        first += count;
+        result.batches.push_back(std::move(outs[b].result));
     }
 
     result.wall_seconds =

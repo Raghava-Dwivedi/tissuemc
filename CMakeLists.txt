@@ -3,6 +3,7 @@ project(tissuemc VERSION 0.1.0 LANGUAGES CXX)
 
 option(TISSUEMC_BUILD_TESTS "Build unit tests" ON)
 option(TISSUEMC_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+option(TISSUEMC_TSAN "Build with ThreadSanitizer (exclusive with TISSUEMC_SANITIZE)" OFF)
 option(TISSUEMC_ENABLE_CUDA "Build the CUDA engine (requires nvcc)" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -16,6 +17,14 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-con
 if(TISSUEMC_SANITIZE)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
+endif()
+
+if(TISSUEMC_TSAN)
+  if(TISSUEMC_SANITIZE)
+    message(FATAL_ERROR "TISSUEMC_TSAN and TISSUEMC_SANITIZE cannot be combined")
+  endif()
+  add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+  add_link_options(-fsanitize=thread)
 endif()
 
 find_package(Threads REQUIRED)

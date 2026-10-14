@@ -42,6 +42,21 @@ jobs:
       - name: Tests under sanitizers
         run: uv run ctest --test-dir build-san --output-on-failure
 
+  thread-sanitizer:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync
+      - name: Configure (Debug, TSan)
+        run: uv run cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DTISSUEMC_TSAN=ON
+      - name: Build
+        run: uv run cmake --build build-tsan
+      - name: Threaded-engine tests under ThreadSanitizer
+        # The single-threaded statistical tests add minutes under TSan and exercise no threading.
+        run: ./build-tsan/tissuemc_tests --test-case="*thread*,*partition*,*reproducible*,*invariants*"
+
   lint:
     name: Format and lint
     runs-on: ubuntu-latest

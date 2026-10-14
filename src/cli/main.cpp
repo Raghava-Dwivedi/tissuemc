@@ -21,7 +21,7 @@ void usage(std::FILE *to) {
                      "  --photons N    override the photon count in the input file\n"
                      "  --batches B    number of batches for the standard error (default 10)\n"
                      "  --seed S       64-bit random seed (default 1)\n"
-                     "  --threads T    CPU threads (default 1)\n"
+                     "  --threads T    CPU threads, 0 = one per hardware thread (default 1)\n"
                      "  --output FILE  write full results as JSON\n");
 }
 
