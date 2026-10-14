@@ -30,6 +30,11 @@ def test_parse_threads():
             bench.parse_threads(bad)
 
 
+def test_background_cpu_percent_is_a_nonnegative_number():
+    value = bench.background_cpu_percent()
+    assert value is None or value >= 0.0
+
+
 def test_hardware_and_build_info_have_the_basics():
     hw = bench.hardware_info()
     assert {"os", "machine", "logical_cpus"} <= hw.keys()

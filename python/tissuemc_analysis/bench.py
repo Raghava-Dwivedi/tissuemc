@@ -65,6 +65,22 @@ def hardware_info() -> dict:
     return info
 
 
+def background_cpu_percent() -> float | None:
+    """Total CPU use of all processes right now, in percent of one core.
+
+    Recorded before and after a benchmark so a reader can judge how quiet the machine was. Only
+    the total is kept, never process names, because the result files are public.
+    """
+    out = _run(["ps", "-Ao", "pcpu"])
+    values = []
+    for line in out.splitlines()[1:]:
+        try:
+            values.append(float(line))
+        except ValueError:
+            continue
+    return round(sum(values), 1) if values else None
+
+
 def build_info(root: Path) -> dict:
     """Compiler, flags and source revision the binary was built from."""
     info: dict = {}
@@ -199,11 +215,13 @@ def main(argv: list[str] | None = None) -> int:
         validated = False
 
     load_before = os.getloadavg()[0]
+    cpu_before = background_cpu_percent()
     print(f"\nBenchmarking {config.name}: {args.photons} photons, {args.batches} batches")
     started = time.time()
     body = run_benchmark(
         binary, config, args.photons, args.batches, threads, args.repeats, args.warmup, args.seed
     )
+    cpu_after = background_cpu_percent()
     data = {
         "benchmark": "cpu-scaling",
         "workload": config.name,
@@ -214,6 +232,8 @@ def main(argv: list[str] | None = None) -> int:
         "warmup": args.warmup,
         "validated_before_measuring": validated,
         "load_average_1min_before": load_before,
+        "background_cpu_percent_before": cpu_before,
+        "background_cpu_percent_after": cpu_after,
         "hardware": hardware_info(),
         "build": build_info(root),
         "engine_version": _run([str(binary), "--version"]),
