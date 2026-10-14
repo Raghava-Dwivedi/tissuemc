@@ -43,7 +43,43 @@ Headline results (seed 1, 4,000,000 photons, 50 batches; all 24 checks pass; ful
 
 Each run also checks that energy is conserved and that no photon ends with a non-finite weight or a non-unit direction.
 
-**Known issue: V3 transmittance is low against the published values.** It passes the pre-set 3σ rule, but at z between −2.1 and −2.9 across seeds against both published values (0.0965 and 0.0974). Over 8 seeds and 3.2×10⁷ photons the engine gives T_t = 0.09599 ± 0.00003. The published values' errors are estimated, not stated. I do not yet know whether this is chance in the old published runs or a small real difference; the planned check is to run the original `mcml.c` on the same input. Details are in [`BUILD_LOG.md`](BUILD_LOG.md).
+**V3 transmittance sits 2.6σ below the printed Table 6.7 value.** The cross-check below explains this: the original program itself, run at high statistics, gives a value above this engine's, and a controlled experiment points to the original's random number generator.
+
+## Cross-check against the original MCML
+
+The original program (Wang and Jacques, 1992–93) is not distributed here: its page states no license. Download the five source files from <https://omlc.org/software/mc/mcml/mcml-src/> into `third_party/mcml/` and run `uv run tissuemc-compare-mcml`. The tool checks the files against pinned SHA-256 values, compiles them, runs many independent runs inside one launch, checks that the program read the input as sent (its 1993 input reader returns the address of a local buffer, so every output is verified), and compares with this engine at equal photon counts. The pass rule was fixed before any comparison: |z| < 3 for every quantity.
+
+**10 million photons per case: all 10 comparisons pass** ([`results/mcml-crosscheck.json`](results/mcml-crosscheck.json)).
+
+| Case | Quantity | This engine | Original MCML | z |
+|---|---|---|---|---|
+| V1 thin slab | R_d | 0.097543 ± 0.000071 | 0.097420 ± 0.000071 | +1.23 |
+| V1 thin slab | T_t | 0.660837 ± 0.000102 | 0.660890 ± 0.000100 | −0.37 |
+| V1 thin slab | A | 0.241620 ± 0.000053 | 0.241690 ± 0.000051 | −0.94 |
+| V2 semi-infinite, n = 1.5 | R_d | 0.219952 ± 0.000084 | 0.220049 ± 0.000093 | −0.77 |
+| V2 semi-infinite, n = 1.5 | A | 0.740048 ± 0.000084 | 0.739951 ± 0.000093 | +0.77 |
+| O1 semi-infinite, matched | R_d | 0.415034 ± 0.000087 | 0.414935 ± 0.000101 | +0.74 |
+| O1 semi-infinite, matched | A | 0.584966 ± 0.000087 | 0.585065 ± 0.000101 | −0.74 |
+| V3 three layers | R_d | 0.237732 ± 0.000104 | 0.237852 ± 0.000102 | −0.82 |
+| V3 three layers | T_t | 0.096095 ± 0.000064 | 0.096238 ± 0.000060 | −1.64 |
+| V3 three layers | A | 0.641800 ± 0.000096 | 0.641537 ± 0.000086 | +2.04 |
+
+**That pass was too weak to count as agreement on V3.** With four times the photons, transmittance fails the same rule:
+
+| Quantity | This engine | Original MCML, own generator (z) | Original MCML, generator swapped (z) |
+|---|---|---|---|
+| R_d | 0.237847 ± 0.000049 | 0.237933 ± 0.000051 (−1.23) | 0.237869 ± 0.000054 (−0.30) |
+| T_t | 0.096055 ± 0.000027 | 0.096261 ± 0.000029 (−5.20) | 0.096076 ± 0.000030 (−0.53) |
+| A | 0.641726 ± 0.000048 | 0.641434 ± 0.000047 (+4.34) | 0.641683 ± 0.000048 (+0.63) |
+
+40,000,000 photons each ([`original generator`](results/mcml-crosscheck-v3-extended.json), [`swapped generator`](results/mcml-crosscheck-v3-xoshiro.json)). The three quantities are one difference seen three ways: weight leaving the bottom versus absorbed. What was established:
+
+- The original gave the same T_t in two separate launches (0.096238 ± 0.000060 at 10⁷ photons and 0.096261 ± 0.000029 at 4×10⁷), so this is not a seed fluke.
+- Splitting a homogeneous layer into two or three identical sublayers leaves this engine's results unchanged (z within ±1.2 at 10⁷ photons), so its layer-crossing logic is self-consistent.
+- Rounding this engine's random draws to single precision, as the original's generator does, changes the totals by under 10⁻⁷ (4×10⁻⁸ on T_t), thousands of times smaller than the 2×10⁻⁴ gap. Precision alone is not the cause.
+- Replacing **only** the random number generator in a copy of the original (`--original-rng xoshiro`, with xoshiro256++) gives T_t = 0.096076 ± 0.000030. That agrees with this engine and differs from the unmodified original at z = −4.5.
+
+So the difference comes from the original program's random number generator, not from this engine's physics. **Why** that generator biases the result is not established. The 10⁶-photon run behind the MCML manual's Table 6.7 has a standard error of about 1.9×10⁻⁴ (estimated), so its published T_t of 0.0965 is consistent with that program's own long-run value plus ordinary noise. Result files without an `original_rng` field used the original generator.
 
 ## CPU scaling
 

@@ -15,8 +15,9 @@ Written by hand by the author without AI: *nothing yet.*
 | Thin-slab R_d and T_t agree with published values | van de Hulst 1980, MCML and Prahl et al. 1989 (MCML manual, Table 6.1) | `tissuemc-validate`, CI | R_d z = +0.15, T_t z = +0.11 against van de Hulst |
 | Semi-infinite reflectance with a refractive-index mismatch agrees | Giovanelli 1955, MCML, Prahl et al. (Table 6.2) and the H-function calculation | `tissuemc-validate`, CI | total z = −0.99 (Giovanelli); diffuse z = +1.06 (H-function) |
 | Matched-boundary semi-infinite reflectance is correct | H-function calculation (no published table involved) | `tissuemc-validate`, CI | z = −0.37 |
-| Three-layer R_d agrees | MCML and Gardner et al. (Table 6.7) | `tissuemc-validate`, CI | z = +1.26 (MCML) |
-| Three-layer T_t agrees | MCML and Gardner et al. (Table 6.7) | `tissuemc-validate`, CI | **z = −2.58 (MCML); passes the 3σ rule but is the weakest result. Open.** |
+| Three-layer R_d agrees | MCML and Gardner et al. (Table 6.7); the original program at 4×10⁷ photons | `tissuemc-validate`, `tissuemc-compare-mcml` | z = +1.26 (Table 6.7), z = −1.23 (original program) |
+| Thin slab and semi-infinite cases agree with the original program | Original MCML at 1×10⁷ photons, 40 independent runs | `tissuemc-compare-mcml` (needs the sources, which are not distributed) | all within 3σ (|z| ≤ 1.23). Too weak to be conclusive for differences below about 2×10⁻⁴ |
+| Three-layer T_t agrees | MCML manual Table 6.7 values; the original program itself run at 4×10⁷ photons; the same program with only its random number generator replaced | `tissuemc-validate`, `tissuemc-compare-mcml`, CI (validation only) | 2.6σ below the printed Table 6.7 value, and **5.2σ below the unmodified original program**; **agrees with the original with a modern generator (z = −0.53)**. The difference comes from the original's generator; why is not established (see README and `BUILD_LOG.md`) |
 | Energy is conserved | Weight balance, within standard error | every validation run | passes in all cases |
 | No invalid photon state occurs | Unit-direction and finite-weight checks at every scoring call | every validation run | 0 anomalies |
 | Results do not depend on thread count | Bitwise comparison at 1, 2, 3, 8, 24 and auto threads | `tissuemc_tests`, CI | identical |
@@ -39,7 +40,9 @@ See [BUILD_LOG.md](BUILD_LOG.md), written as the work happened. Entries to date:
 
 ## Limits and open items
 
-- **V3 transmittance** is lower than both published values (see above and `BUILD_LOG.md`). The planned check is to run the original `mcml.c` on the same input.
+- The original MCML program is not distributed here; `tissuemc-compare-mcml` needs its five source files in `third_party/mcml/`. Its checksums were recorded from the copy first compared and guard against accidental change, not against a tampered first download.
+- The 10⁷-photon comparison with the original was too weak to detect a 2×10⁻⁴ difference in V3 transmittance that the 4×10⁷-photon run found. That difference is attributed to the original's random number generator through a controlled swap. The mechanism inside that generator was not investigated.
 - The published V3 values come without standard errors. Their errors are estimated from this engine's per-photon variance, scaled by the photons behind each value.
+- There is no first-principles reference for the layered case, so V3 rests on published values and on agreement with the original program once its generator is replaced.
 - The GPU engine does not exist yet. Nothing here validates GPU results.
 - All performance numbers are from one machine.

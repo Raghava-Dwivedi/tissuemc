@@ -138,12 +138,14 @@ Source: MCML manual (Wang & Jacques), Chapter 6. Verified against the primary PD
 
 The original program is a second implementation written by other people.
 
-- A download script fetches it from OMLC with a checksum. **It is not redistributed in this repo.**
-- The script compiles it locally.
-- It runs the **same `.mci` input files**, because TissueMC reads MCML's input format.
-- Its outputs are compared statistically.
+- The user downloads the five source files from OMLC into `third_party/mcml/`. **They are not redistributed in this repo** (the page states no license). `tissuemc-compare-mcml` checks them against pinned SHA-256 values.
+- The tool compiles them locally, outside the source directory, with the 1993 sources unmodified.
+- It runs the **same `.mci` input files**, because TissueMC reads MCML's input format, as many independent runs in one launch.
+- Its outputs are compared statistically at equal photon counts, with a standard error on both sides.
 
-It also serves as the single-threaded CPU baseline.
+The original is single-threaded, so it also serves as the single-threaded CPU baseline.
+
+**Result of this check (2026-10-14).** The original's generator turned out to matter. At 1×10⁷ photons all comparisons passed; at 4×10⁷ the V3 transmittance differs by 2×10⁻⁴ (5σ), and the difference vanishes when only the original's random number generator is replaced. So the original is a good check of this engine's transport logic but, at high statistics, not a gold standard for the last 10⁻⁴. Details are in the README and `BUILD_LOG.md`.
 
 ### 5.5 Cross-precision check
 

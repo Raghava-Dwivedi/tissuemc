@@ -1,0 +1,50 @@
+{
+ "runs": 160,
+ "photons_per_run": 250000,
+ "engine_seed": 21,
+ "source_sha256": {
+  "mcml.h": "574a94d97759d4fd968a5a6c72ab1f329b307720bec61411055accc1133d610c",
+  "mcmlio.c": "b83e005ca980d08b42316f2e32647450cade496e2a0d758d203fbbb1f896b09c",
+  "mcmlnr.c": "7e470165711ad7a8f7d1327b8d4da9f2bf2dd9dbb7121f6f5e439f47859e385f",
+  "mcmlgo.c": "2135c419e00cf0d7be9f709b5884b43e2a7b88b0bc540c8747fe2996bd3a5e6e",
+  "mcmlmain.c": "1a9b6b7c23bd472ec5cd917f050c827598cfa2abeb985a6ca3bddbaa018e5fa3"
+ },
+ "compile_flags": [
+  "-std=gnu89",
+  "-O2",
+  "-Wno-implicit-function-declaration",
+  "-Wno-error"
+ ],
+ "comparisons": [
+  {
+   "case": "v3_three_layer",
+   "quantity": "rd",
+   "ours": 0.2378466391560909,
+   "se_ours": 4.879871428772845e-05,
+   "mcml": 0.23793279374999998,
+   "se_mcml": 5.058537687442801e-05,
+   "z": -1.225762694166373,
+   "passed": true
+  },
+  {
+   "case": "v3_three_layer",
+   "quantity": "tt",
+   "ours": 0.09605472987046405,
+   "se_ours": 2.7381718603470095e-05,
+   "mcml": 0.096260515625,
+   "se_mcml": 2.859809113328487e-05,
+   "z": -5.197522615539039,
+   "passed": false
+  },
+  {
+   "case": "v3_three_layer",
+   "quantity": "absorbed",
+   "ours": 0.6417257685434413,
+   "se_ours": 4.7847399385740975e-05,
+   "mcml": 0.64143381875,
+   "se_mcml": 4.737266851921788e-05,
+   "z": 4.336000123212477,
+   "passed": false
+  }
+ ]
+}

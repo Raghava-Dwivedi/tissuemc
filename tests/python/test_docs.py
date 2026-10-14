@@ -48,3 +48,37 @@ def test_all_reported_checks_passed():
     assert len(rows) == 24
     assert all(r["passed"] for r in rows)
     assert "all 24 checks pass" in README
+
+
+def test_cross_check_tables_match_result_files():
+    for name in (
+        "mcml-crosscheck.json",
+        "mcml-crosscheck-v3-extended.json",
+        "mcml-crosscheck-v3-xoshiro.json",
+    ):
+        data = json.loads((ROOT / "results" / name).read_text())
+        for c in data["comparisons"]:
+            assert f"{c['ours']:.6f} ± {c['se_ours']:.6f}" in README, (
+                name,
+                c["case"],
+                c["quantity"],
+            )
+            assert f"{c['mcml']:.6f} ± {c['se_mcml']:.6f}" in README, (
+                name,
+                c["case"],
+                c["quantity"],
+            )
+            z = f"{c['z']:+.2f}".replace("-", "−")
+            assert z in README, (name, c["case"], c["quantity"], z)
+
+
+def test_cross_check_readme_states_the_failure_and_its_limit():
+    """The README must not claim agreement the data do not show."""
+    data = json.loads((ROOT / "results" / "mcml-crosscheck-v3-extended.json").read_text())
+    tt = next(c for c in data["comparisons"] if c["quantity"] == "tt")
+    assert not tt["passed"]
+    assert "too weak" in README
+    assert "not established" in README
+    xo = json.loads((ROOT / "results" / "mcml-crosscheck-v3-xoshiro.json").read_text())
+    assert xo["original_rng"] == "xoshiro"
+    assert all(c["passed"] for c in xo["comparisons"])
