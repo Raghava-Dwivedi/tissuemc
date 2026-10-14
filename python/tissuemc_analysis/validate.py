@@ -20,6 +20,8 @@ from pathlib import Path
 
 from . import oracle, stats
 
+CONSERVATION_FLOOR = {"float64": 1e-12, "float32": 1e-6}
+
 
 def find_root() -> Path:
     """The repository root: the nearest parent directory holding CMakeLists.txt."""
@@ -58,13 +60,15 @@ class CheckResult:
         )
 
 
-def run_engine(binary: Path, config: Path, photons: int, batches: int, seed: int) -> dict:
+def run_engine(
+    binary: Path, config: Path, photons: int, batches: int, seed: int, precision: str = "float64"
+) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.json"
         cmd = [
             str(binary), "run", str(config),
             "--photons", str(photons), "--batches", str(batches),
-            "--seed", str(seed), "--output", str(out),
+            "--seed", str(seed), "--precision", precision, "--output", str(out),
         ]  # fmt: skip
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
@@ -118,13 +122,17 @@ def invariant_results(name: str, run: dict, seed: int) -> list[CheckResult]:
     """Checks that must hold for every run: unit directions, finite weights, energy conservation."""
     out: list[CheckResult] = []
     # Conservation is exact in expectation (roulette is unbiased): the residual must be within
-    # a few standard errors of zero. The tiny floor covers runs with no roulette at all.
+    # a few standard errors of zero. The floor covers runs where roulette is rare and the standard
+    # error is tiny: summation rounding in float64, and per-step weight rounding in float32
+    # (measured about 3e-8 per photon; the floor leaves a 30x margin and is still ~300x below the
+    # statistical error of a validation run).
+    floor = CONSERVATION_FLOOR[run["precision"]]
     batches = run["batches"]
     photons = [b["photons"] for b in batches]
     per_batch = [b["rd"] + b["tt"] + math.fsum(b["absorbed"]) for b in batches]
     total = stats.batch_estimate(per_batch, photons)
     residual = total.mean + run["specular"] - 1.0
-    c = stats.compare(residual, total.se, 0.0, 0.0, rounding=1e-12)
+    c = stats.compare(residual, total.se, 0.0, 0.0, rounding=floor)
     out.append(CheckResult(name, seed, "conservation", "rd + tt + absorbed + rsp = 1", c))
     anomalies = float(run["anomalies"])
     c = stats.compare(anomalies, 0.0, 0.0)
@@ -150,6 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--photons", type=int, help="photons per case (default: per-case setting)")
     ap.add_argument("--batches", type=int, default=50, help="batches for the standard error")
     ap.add_argument("--seeds", default="1", help="comma-separated seeds (default: 1)")
+    ap.add_argument(
+        "--precision",
+        choices=["float64", "float32"],
+        default="float64",
+        help="transport precision of the engine under test (default: float64)",
+    )
     ap.add_argument("--binary", type=Path, help="use this engine binary instead of building one")
     ap.add_argument("--report", type=Path, help="write all comparisons to this JSON file")
     args = ap.parse_args(argv)
@@ -165,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     seeds = [int(s) for s in args.seeds.split(",")]
 
+    print(f"engine precision: {args.precision}\n")
     all_results: list[CheckResult] = []
     engine_agrees = True
     for name in names:
@@ -179,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.photons or case["photons"],
                 args.batches,
                 seed,
+                args.precision,
             )
             if not summary_matches_engine(run):
                 engine_agrees = False
@@ -203,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "case": r.case,
                         "seed": r.seed,
+                        "precision": args.precision,
                         "quantity": r.quantity,
                         "source": r.source,
                         **{k: getattr(r.comparison, k) for k in r.comparison.__dataclass_fields__},

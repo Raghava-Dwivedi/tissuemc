@@ -15,29 +15,34 @@
 namespace tissuemc {
 namespace {
 
-// Scores one batch. Every accumulator is compensated; see accumulate.hpp for why.
-class CpuTally {
+// Scores one batch. Transport runs in `Real`, but every accumulator is a compensated double: the
+// float32 transport path is then free of tally round-off, which is what the GPU engine has to
+// work around. See accumulate.hpp for why compensation matters.
+template <class Real> class CpuTally {
   public:
-    explicit CpuTally(const Geometry<double> &geo)
+    explicit CpuTally(const Geometry<Real> &geo)
         : absorbed_(static_cast<size_t>(geo.num_layers)), az_(static_cast<size_t>(geo.nz)),
           rr_(static_cast<size_t>(geo.nr)) {}
 
-    void score_absorption(const Photon<double> &p, const Geometry<double> &geo, double w) {
+    void score_absorption(const Photon<Real> &p, const Geometry<Real> &geo, Real w) {
         ++events;
         check(p, w);
-        absorbed_[static_cast<size_t>(p.layer)].add(w);
-        az_[bin(p.z, geo.dz, geo.nz)].add(w);
+        absorbed_[static_cast<size_t>(p.layer)].add(static_cast<double>(w));
+        az_[bin(static_cast<double>(p.z), static_cast<double>(geo.dz), geo.nz)].add(
+            static_cast<double>(w));
     }
 
-    void score_reflectance(const Photon<double> &p, const Geometry<double> &geo, double w) {
+    void score_reflectance(const Photon<Real> &p, const Geometry<Real> &geo, Real w) {
         check(p, w);
-        rd.add(w);
-        rr_[bin(std::sqrt(p.x * p.x + p.y * p.y), geo.dr, geo.nr)].add(w);
+        rd.add(static_cast<double>(w));
+        const double r = std::sqrt(static_cast<double>(p.x) * static_cast<double>(p.x) +
+                                   static_cast<double>(p.y) * static_cast<double>(p.y));
+        rr_[bin(r, static_cast<double>(geo.dr), geo.nr)].add(static_cast<double>(w));
     }
 
-    void score_transmittance(const Photon<double> &p, const Geometry<double> &, double w) {
+    void score_transmittance(const Photon<Real> &p, const Geometry<Real> &, Real w) {
         check(p, w);
-        tt.add(w);
+        tt.add(static_cast<double>(w));
     }
 
     CompensatedSum<double> rd, tt;
@@ -59,10 +64,14 @@ class CpuTally {
                                                : static_cast<size_t>(i);
     }
 
-    // A finite weight and a unit direction vector are invariants of correct transport.
-    void check(const Photon<double> &p, double w) {
-        const double norm2 = p.ux * p.ux + p.uy * p.uy + p.uz * p.uz;
-        if (!std::isfinite(w) || !std::isfinite(norm2) || std::fabs(norm2 - 1.0) > 1e-9) {
+    // A finite weight and a unit direction vector are invariants of correct transport. The
+    // tolerance sits well above the rounding of the transport precision and far below any bug.
+    void check(const Photon<Real> &p, Real w) {
+        constexpr double kTolerance = sizeof(Real) == sizeof(double) ? 1e-9 : 1e-5;
+        const double ux = p.ux, uy = p.uy, uz = p.uz;
+        const double norm2 = ux * ux + uy * uy + uz * uz;
+        if (!std::isfinite(static_cast<double>(w)) || !std::isfinite(norm2) ||
+            std::fabs(norm2 - 1.0) > kTolerance) {
             ++anomalies;
         }
     }
@@ -84,8 +93,9 @@ struct BatchOutput {
     std::vector<double> az, rr;
 };
 
-BatchOutput run_batch(const Geometry<double> &geo, uint64_t seed, uint64_t first, uint64_t count) {
-    CpuTally tally(geo);
+template <class Real>
+BatchOutput run_batch(const Geometry<Real> &geo, uint64_t seed, uint64_t first, uint64_t count) {
+    CpuTally<Real> tally(geo);
     for (uint64_t id = first; id < first + count; ++id) {
         PhotonRng rng(seed, id);
         simulate_photon(geo, rng, tally);
@@ -111,6 +121,8 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
         run.photons = opt.photons;
     }
     const Geometry<double> geo = make_geometry<double>(run); // validates the run
+    const Geometry<float> geo_f = make_geometry<float>(run);
+    const bool use_float = opt.precision == Precision::Float32;
     if (opt.batches < 1) {
         throw ConfigError("batches must be >= 1");
     }
@@ -137,7 +149,7 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
     RunResult result;
     result.spec = run;
     result.engine = "cpu";
-    result.precision = "float64";
+    result.precision = use_float ? "float32" : "float64";
     result.seed = opt.seed;
     result.threads = threads;
     result.specular = specular_reflectance(geo);
@@ -163,7 +175,8 @@ RunResult run_cpu(const RunSpec &run_in, const EngineOptions &opt) {
                 if (b >= nb) {
                     return;
                 }
-                outs[b] = run_batch(geo, opt.seed, first_of(b), count_of(b));
+                outs[b] = use_float ? run_batch(geo_f, opt.seed, first_of(b), count_of(b))
+                                    : run_batch(geo, opt.seed, first_of(b), count_of(b));
             }
         } catch (...) {
             std::lock_guard<std::mutex> lock(failure_mutex);

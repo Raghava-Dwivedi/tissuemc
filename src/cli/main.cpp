@@ -13,16 +13,18 @@
 namespace {
 
 void usage(std::FILE *to) {
-    std::fprintf(to, "usage:\n"
-                     "  tissuemc --version\n"
-                     "  tissuemc run <input.mci> [options]\n"
-                     "\n"
-                     "options for 'run':\n"
-                     "  --photons N    override the photon count in the input file\n"
-                     "  --batches B    number of batches for the standard error (default 10)\n"
-                     "  --seed S       64-bit random seed (default 1)\n"
-                     "  --threads T    CPU threads, 0 = one per hardware thread (default 1)\n"
-                     "  --output FILE  write full results as JSON\n");
+    std::fprintf(
+        to, "usage:\n"
+            "  tissuemc --version\n"
+            "  tissuemc run <input.mci> [options]\n"
+            "\n"
+            "options for 'run':\n"
+            "  --photons N    override the photon count in the input file\n"
+            "  --batches B    number of batches for the standard error (default 10)\n"
+            "  --seed S       64-bit random seed (default 1)\n"
+            "  --threads T    CPU threads, 0 = one per hardware thread (default 1)\n"
+            "  --precision P  float64 (default) or float32 transport; tallies are always double\n"
+            "  --output FILE  write full results as JSON\n");
 }
 
 // Parse a non-negative integer option value; exits with a message on bad input.
@@ -61,6 +63,17 @@ int run_command(int argc, char **argv) {
             opt.seed = parse_count("--seed", value("--seed"));
         } else if (a == "--threads") {
             opt.threads = static_cast<int>(parse_count("--threads", value("--threads")));
+        } else if (a == "--precision") {
+            const std::string p = value("--precision");
+            if (p == "float64") {
+                opt.precision = tissuemc::Precision::Float64;
+            } else if (p == "float32") {
+                opt.precision = tissuemc::Precision::Float32;
+            } else {
+                std::fprintf(stderr, "tissuemc: --precision must be float64 or float32, got '%s'\n",
+                             p.c_str());
+                return 2;
+            }
         } else if (a == "--output") {
             output = value("--output");
         } else {

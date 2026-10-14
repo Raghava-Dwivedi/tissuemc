@@ -160,3 +160,29 @@ TEST_CASE("the thread count in the result is the number actually used") {
     CHECK(used >= 1);
     CHECK(used <= 3);
 }
+
+TEST_CASE("float32 transport follows the same photons as float64 far more closely than noise") {
+    // Both precisions draw the same random numbers for photon i, so a photon almost always takes
+    // the same path in either; only a tiny fraction flip an outcome through rounding. The totals
+    // must therefore agree much better than their statistical error. Measured at 1e6 photons on
+    // this input: total R_d differs by 2.8e-6 against a standard error of 3.0e-4. The bounds
+    // below leave about a tenfold margin so that other compilers' rounding does not trip them.
+    const RunSpec run = load("v3_three_layer.mci");
+    EngineOptions o64, o32;
+    o64.photons = o32.photons = 200'000;
+    o64.batches = o32.batches = 20;
+    o32.precision = Precision::Float32;
+    const RunResult a = run_cpu(run, o64), b = run_cpu(run, o32);
+    CHECK(a.precision == "float64");
+    CHECK(b.precision == "float32");
+    CHECK(b.anomalies() == 0);
+    CHECK(std::fabs(a.rd().mean - b.rd().mean) < 0.1 * a.rd().se);
+    CHECK(std::fabs(a.tt().mean - b.tt().mean) < 0.1 * a.tt().se);
+    for (size_t i = 0; i < a.batches.size(); ++i) {
+        CHECK(std::fabs(a.batches[i].rd - b.batches[i].rd) < 5e-3 * a.batches[i].rd);
+        CHECK(std::fabs(a.batches[i].tt - b.batches[i].tt) < 5e-3 * a.batches[i].tt);
+    }
+    const double events_a = static_cast<double>(a.events()),
+                 events_b = static_cast<double>(b.events());
+    CHECK(std::fabs(events_a - events_b) < 1e-3 * events_a);
+}

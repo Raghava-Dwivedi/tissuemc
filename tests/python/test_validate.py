@@ -68,18 +68,22 @@ def test_validator_detects_a_single_standard_error_budget_overrun(v1_run):
 
 
 @needs_binary
-def test_engine_agrees_with_published_values_across_seeds():
-    """V1 and the semi-infinite oracle, three seeds each, at a reduced photon count.
+@pytest.mark.parametrize(
+    ("precision", "seeds"), [("float64", (101, 102, 103)), ("float32", (101,))]
+)
+def test_engine_agrees_with_published_values_across_seeds(precision, seeds):
+    """V1 and the semi-infinite oracle, several seeds, at a reduced photon count.
 
     Each seed is an independent draw, so a systematic error would show up in all of them while
-    sampling noise would not. Seeds are fixed in advance and not chosen after the fact.
+    sampling noise would not. Seeds are fixed in advance and not chosen after the fact. The
+    float32 path is the one the GPU engine runs, so it gets the same check.
     """
     cases = ["v1_slab", "o1_semi_infinite_matched", "v2_semi_infinite"]
     for name in cases:
         case = REFS["cases"][name]
-        for seed in (101, 102, 103):
+        for seed in seeds:
             run = validate.run_engine(
-                BINARY, ROOT / "configs" / case["config"], 1_000_000, 50, seed
+                BINARY, ROOT / "configs" / case["config"], 1_000_000, 50, seed, precision
             )
             results = validate.evaluate_case(name, case, run, seed)
             results += validate.invariant_results(name, run, seed)

@@ -160,6 +160,8 @@ It supplies two reference values that depend on no published table:
 | **O1** | Matched boundary (n = 1), μa = 10, μs = 90 cm⁻¹, g = 0 | R_d = 0.414947 |
 | V2 (extra check) | n = 1.5, same medium | R_d = 0.219704 (diffuse); 0.259704 total |
 
+**Measured tightness.** Because both precisions draw the same numbers for photon *i*, a photon takes almost the same path in either, and only a tiny fraction flip an outcome through rounding. On V3 at 10⁶ photons the float32 and float64 totals differ by 2.8×10⁻⁶ in R_d against a standard error of 3.0×10⁻⁴, about a hundred times tighter than statistical noise, and per-batch sums differ by under 5×10⁻⁴ relative. On the thin slab (V1) the gap is fifty thousand times below the standard error. The CPU float32 path runs the same physics code as the GPU kernel, so this is also a local stand-in for it, and the GPU engine will be held to the same standard: per-batch agreement with the CPU on identical photons, not just agreement within noise.
+
 **Rule:** no throughput number is recorded for any engine or optimization step unless V1–V3 and O1 pass on that exact build. The benchmark harness enforces this.
 
 ## 6. GPU optimization ladder

@@ -21,6 +21,7 @@ Written by hand by the author without AI: *nothing yet.*
 | No invalid photon state occurs | Unit-direction and finite-weight checks at every scoring call | every validation run | 0 anomalies |
 | Results do not depend on thread count | Bitwise comparison at 1, 2, 3, 8, 24 and auto threads | `tissuemc_tests`, CI | identical |
 | The threaded engine has no data races | ThreadSanitizer | CI | clean |
+| The float32 transport path (the one the GPU runs) is correct | The full validation suite on `--precision float32`, plus float32 against float64 on identical photons (totals agree to about 1% of their standard error on V3) | `tissuemc-validate --precision float32`, `tissuemc_tests`, CI | 24/24 checks pass; V3 R_d differs by 2.8e-6 against a standard error of 3.0e-4 |
 | The random number generator is correct | Known-answer vectors from the Random123 distribution | `tissuemc_tests`, CI | match |
 
 ## Tests written alongside the code
