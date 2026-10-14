@@ -1,0 +1,13 @@
+build/
+build-*/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+.env
+third_party/mcml/
+*.mco
+results/scratch/
