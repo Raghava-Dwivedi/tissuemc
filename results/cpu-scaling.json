@@ -1,0 +1,235 @@
+{
+ "benchmark": "cpu-scaling",
+ "workload": "tissue_g09.mci",
+ "photons": 300000,
+ "batches": 240,
+ "seed": 1,
+ "repeats": 5,
+ "warmup": 1,
+ "validated_before_measuring": true,
+ "load_average_1min_before": 2.47705078125,
+ "background_cpu_percent_before": 109.8,
+ "background_cpu_percent_after": 103.7,
+ "hardware": {
+  "os": "Darwin 25.3.0",
+  "machine": "arm64",
+  "logical_cpus": 12,
+  "cpu": "Apple M4 Pro",
+  "performance_cores": 8,
+  "efficiency_cores": 4,
+  "memory_bytes": 25769803776
+ },
+ "build": {
+  "compiler": "/usr/bin/c++",
+  "compiler_version": "Apple clang version 17.0.0 (clang-1700.6.3.2)",
+  "build_type": "Release",
+  "flags": "-O3 -DNDEBUG",
+  "git_commit": "d354c7857661ca02b51bc40fda155fda82f4ecf3",
+  "git_dirty": false
+ },
+ "engine_version": "tissuemc 0.1.0",
+ "started_unix": 1791987479.2092512,
+ "notes": [
+  "Throughput is the median of the repeats; iqr is the interquartile range across repeats.",
+  "macOS cannot pin threads to cores. Threads beyond the performance-core count also run on efficiency cores, which are slower and add noise; efficiency is speedup / threads.",
+  "Photons per second counts launched photon packets; events per second counts absorption/scattering events, which is the better measure of work done."
+ ],
+ "results": [
+  {
+   "threads": 1,
+   "wall_seconds": [
+    13.74778875,
+    13.868413708,
+    13.916319083,
+    14.042281,
+    14.056828834
+   ],
+   "events": 464569365,
+   "summary": {
+    "rd": {
+     "mean": 0.6163458655733034,
+     "se": 0.0006183355753973791
+    },
+    "tt": {
+     "mean": 0,
+     "se": 0
+    },
+    "absorbed": {
+     "mean": 0.35928150652604846,
+     "se": 0.0006183441089293702
+    },
+    "conservation_residual": {
+     "mean": 2.4681672328163984e-07,
+     "se": 1.588000734699094e-07
+    }
+   },
+   "wall": {
+    "median": 13.916319083,
+    "q1": 13.868413708,
+    "q3": 14.042281,
+    "iqr": 0.17386729199999884
+   },
+   "photons_per_second": 21557.42464733194,
+   "events_per_second": 33383063.598154493,
+   "speedup": 1.0,
+   "efficiency": 1.0
+  },
+  {
+   "threads": 2,
+   "wall_seconds": [
+    7.285634333,
+    7.306394875,
+    7.324272292,
+    7.341529,
+    7.350366292
+   ],
+   "events": 464569365,
+   "summary": {
+    "rd": {
+     "mean": 0.6163458655733034,
+     "se": 0.0006183355753973791
+    },
+    "tt": {
+     "mean": 0,
+     "se": 0
+    },
+    "absorbed": {
+     "mean": 0.35928150652604846,
+     "se": 0.0006183441089293702
+    },
+    "conservation_residual": {
+     "mean": 2.4681672328163984e-07,
+     "se": 1.588000734699094e-07
+    }
+   },
+   "wall": {
+    "median": 7.324272292,
+    "q1": 7.306394875,
+    "q3": 7.341529,
+    "iqr": 0.03513412500000079
+   },
+   "photons_per_second": 40959.70057362253,
+   "events_per_second": 63428740.286926515,
+   "speedup": 1.9000275424222308,
+   "efficiency": 0.9500137712111154
+  },
+  {
+   "threads": 4,
+   "wall_seconds": [
+    3.779237167,
+    3.777682875,
+    3.775862125,
+    3.775141833,
+    3.789584208
+   ],
+   "events": 464569365,
+   "summary": {
+    "rd": {
+     "mean": 0.6163458655733034,
+     "se": 0.0006183355753973791
+    },
+    "tt": {
+     "mean": 0,
+     "se": 0
+    },
+    "absorbed": {
+     "mean": 0.35928150652604846,
+     "se": 0.0006183441089293702
+    },
+    "conservation_residual": {
+     "mean": 2.4681672328163984e-07,
+     "se": 1.588000734699094e-07
+    }
+   },
+   "wall": {
+    "median": 3.777682875,
+    "q1": 3.775862125,
+    "q3": 3.779237167,
+    "iqr": 0.003375041999999606
+   },
+   "photons_per_second": 79413.75968463208,
+   "events_per_second": 122977333.02984041,
+   "speedup": 3.683824064506738,
+   "efficiency": 0.9209560161266845
+  },
+  {
+   "threads": 8,
+   "wall_seconds": [
+    1.98519675,
+    1.996045958,
+    1.974592625,
+    1.997747917,
+    2.022455875
+   ],
+   "events": 464569365,
+   "summary": {
+    "rd": {
+     "mean": 0.6163458655733034,
+     "se": 0.0006183355753973791
+    },
+    "tt": {
+     "mean": 0,
+     "se": 0
+    },
+    "absorbed": {
+     "mean": 0.35928150652604846,
+     "se": 0.0006183441089293702
+    },
+    "conservation_residual": {
+     "mean": 2.4681672328163984e-07,
+     "se": 1.588000734699094e-07
+    }
+   },
+   "wall": {
+    "median": 1.996045958,
+    "q1": 1.98519675,
+    "q3": 1.997747917,
+    "iqr": 0.01255116700000003
+   },
+   "photons_per_second": 150297.1406032125,
+   "events_per_second": 232744823.90450048,
+   "speedup": 6.971943219656067,
+   "efficiency": 0.8714929024570084
+  },
+  {
+   "threads": 12,
+   "wall_seconds": [
+    1.827311958,
+    1.83265675,
+    1.818104458,
+    1.844921625,
+    1.864934917
+   ],
+   "events": 464569365,
+   "summary": {
+    "rd": {
+     "mean": 0.6163458655733034,
+     "se": 0.0006183355753973791
+    },
+    "tt": {
+     "mean": 0,
+     "se": 0
+    },
+    "absorbed": {
+     "mean": 0.35928150652604846,
+     "se": 0.0006183441089293702
+    },
+    "conservation_residual": {
+     "mean": 2.4681672328163984e-07,
+     "se": 1.588000734699094e-07
+    }
+   },
+   "wall": {
+    "median": 1.83265675,
+    "q1": 1.827311958,
+    "q3": 1.844921625,
+    "iqr": 0.017609667000000107
+   },
+   "photons_per_second": 163696.77518717022,
+   "events_per_second": 253495023.0041714,
+   "speedup": 7.593521854542592,
+   "efficiency": 0.6327934878785494
+  }
+ ],
+ "speedup_baseline_threads": 1
+}
