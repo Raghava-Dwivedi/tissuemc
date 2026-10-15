@@ -15,14 +15,14 @@
 namespace tissuemc {
 namespace {
 
-#define CUDA_CHECK(call)                                                                        \
-    do {                                                                                        \
-        const cudaError_t tmc_err = (call);                                                     \
-        if (tmc_err != cudaSuccess) {                                                           \
-            throw std::runtime_error(std::string("CUDA error at ") + __FILE__ + ":" +           \
-                                     std::to_string(__LINE__) + ": " +                          \
-                                     cudaGetErrorString(tmc_err));                              \
-        }                                                                                       \
+#define CUDA_CHECK(call)                                                                           \
+    do {                                                                                           \
+        const cudaError_t tmc_err = (call);                                                        \
+        if (tmc_err != cudaSuccess) {                                                              \
+            throw std::runtime_error(std::string("CUDA error at ") + __FILE__ + ":" +              \
+                                     std::to_string(__LINE__) + ": " +                             \
+                                     cudaGetErrorString(tmc_err));                                 \
+        }                                                                                          \
     } while (0)
 
 constexpr int kBlockSize = 128;
@@ -80,8 +80,8 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     DeviceArray<T> d_rd(nb), d_tt(nb), d_abs(nb * layers);
     DeviceArray<T> d_az(static_cast<size_t>(geo.nz)), d_rr(static_cast<size_t>(geo.nr));
     DeviceArray<unsigned long long> d_events(nb), d_anomalies(nb);
-    const GpuTallyArrays<T> arrays{d_rd.get(),     d_tt.get(),     d_abs.get(),       d_az.get(),
-                                   d_rr.get(),     d_events.get(), d_anomalies.get()};
+    const GpuTallyArrays<T> arrays{d_rd.get(), d_tt.get(),     d_abs.get(),      d_az.get(),
+                                   d_rr.get(), d_events.get(), d_anomalies.get()};
 
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
@@ -160,9 +160,8 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     }
     cudaDeviceProp prop;
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
-    return opt.gpu_tally == TallyPrecision::Float32
-               ? run_with_tallies<float>(run, opt, geo, prop)
-               : run_with_tallies<double>(run, opt, geo, prop);
+    return opt.gpu_tally == TallyPrecision::Float32 ? run_with_tallies<float>(run, opt, geo, prop)
+                                                    : run_with_tallies<double>(run, opt, geo, prop);
 }
 
 } // namespace tissuemc
