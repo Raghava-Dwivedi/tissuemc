@@ -59,3 +59,13 @@ def test_independent_runs_do_not_pass():
     a = validate.run_engine(BINARY, CONFIG, 400_000, 20, 9, "float32")
     b = validate.run_engine(BINARY, CONFIG, 400_000, 20, 10, "float32")
     assert not all(g.passed for g in cross_engine.compare_runs(a, b))
+
+
+def test_a_shift_in_absorbed_weight_alone_is_caught():
+    """R_d and T_t unchanged but absorbed weight off: the check must still fail."""
+    shifted = fake_run()
+    for b in shifted["batches"]:
+        b["absorbed"] = [x * 1.02 for x in b["absorbed"]]
+    gaps = cross_engine.compare_runs(fake_run(), shifted)
+    failed = [g.name for g in gaps if not g.passed]
+    assert failed and all("absorbed" in name for name in failed)

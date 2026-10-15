@@ -12,6 +12,9 @@ to about 0.01 standard errors on totals, 5e-4 per batch, and 2e-5 on event count
 photons). The limits are 25 to 100 times looser than that because the GPU's math library and
 fused multiply-add contraction round differently from the CPU's. If a GPU run fails them, the
 cause is to be found, not the limit loosened.
+
+The absorbed-weight limits were added after R1, whose cross-check had not covered the one tally
+that rung changed. They use the same limits as R_d and T_t.
 """
 
 from __future__ import annotations
@@ -60,7 +63,8 @@ def compare_runs(a: dict, b: dict) -> list[Gap]:
         raise ValueError("the two runs do not use the same batches")
     gaps: list[Gap] = []
     photons = [x["photons"] for x in a["batches"]]
-    for key in ("rd", "tt"):
+    # R_d and T_t are added once per photon; absorbed weight is the tally a rung may change.
+    for key in ("rd", "tt", "absorbed"):
         sa, sb = _sums(a, key), _sums(b, key)
         ea = stats.batch_estimate(sa, photons)
         eb = stats.batch_estimate(sb, photons)
