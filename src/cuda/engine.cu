@@ -28,8 +28,8 @@ namespace {
 constexpr int kBlockSize = 128;
 constexpr uint64_t kPhotonsPerLaunch = uint64_t(1) << 26;
 
-// Every thread simulates one photon from launch to death. Rung 0 adds each result straight into
-// the global tallies; rung 1 publishes per-photon sums once (see gpu_tally.hpp).
+// Rungs 0 and 1: every thread simulates one photon from launch to death. Rung 0 adds each result
+// straight into the global tallies; rung 1 publishes per-photon sums once (see gpu_tally.hpp).
 template <class T>
 __global__ void photon_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed, uint64_t first,
                               uint64_t count, GpuTallyArrays<T> arrays, int rung) {
@@ -39,6 +39,17 @@ __global__ void photon_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed
     }
     const uint64_t id = first + i;
     run_photon(rung, geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
+}
+
+// Rung 3: a fixed set of resident threads. Each is a lane that relaunches a new photon whenever its
+// own ends, until the shared counter says the photons have run out (see PersistentLane).
+template <class T>
+__global__ void persistent_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed,
+                                  uint64_t first, uint64_t end, GpuTallyArrays<T> arrays,
+                                  unsigned long long *next) {
+    PersistentLane<T> lane(arrays, geo.num_layers);
+    while (lane.advance(geo, seed, plan, first, end, next)) {
+    }
 }
 
 template <class T> class DeviceArray {
@@ -83,16 +94,33 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     const GpuTallyArrays<T> arrays{d_rd.get(), d_tt.get(),     d_abs.get(),      d_az.get(),
                                    d_rr.get(), d_events.get(), d_anomalies.get()};
 
+    DeviceArray<unsigned long long> d_next(1); // rung 3: the next unclaimed photon number
+
     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
     CUDA_CHECK(cudaEventRecord(start));
-    for (uint64_t first = 0; first < run.photons; first += kPhotonsPerLaunch) {
-        const uint64_t count = std::min(kPhotonsPerLaunch, run.photons - first);
-        const unsigned blocks = static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
-        photon_kernel<T>
-            <<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays, opt.rung);
+    if (opt.rung == 3) {
+        // As many blocks as can be resident at once, so every lane stays busy until the photons
+        // run out; never more lanes than photons.
+        int per_sm = 0;
+        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, persistent_kernel<T>,
+                                                                 kBlockSize, 0));
+        const uint64_t resident = static_cast<uint64_t>(std::max(per_sm, 1)) *
+                                  static_cast<uint64_t>(prop.multiProcessorCount);
+        const uint64_t needed = (run.photons + kBlockSize - 1) / kBlockSize;
+        const unsigned blocks = static_cast<unsigned>(std::min(resident, needed));
+        persistent_kernel<T>
+            <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
         CUDA_CHECK(cudaGetLastError());
+    } else {
+        for (uint64_t first = 0; first < run.photons; first += kPhotonsPerLaunch) {
+            const uint64_t count = std::min(kPhotonsPerLaunch, run.photons - first);
+            const unsigned blocks = static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
+            photon_kernel<T>
+                <<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays, opt.rung);
+            CUDA_CHECK(cudaGetLastError());
+        }
     }
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
@@ -157,8 +185,8 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     if (static_cast<uint64_t>(opt.batches) > run.photons) {
         throw ConfigError("batches cannot exceed the number of photons");
     }
-    if (opt.rung != 0 && opt.rung != 1) {
-        throw ConfigError("rung must be 0 or 1");
+    if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3) {
+        throw ConfigError("rung must be 0, 1 or 3 (rung 2 is not built yet)");
     }
     if (!cuda_available()) {
         throw std::runtime_error("no usable CUDA device found");

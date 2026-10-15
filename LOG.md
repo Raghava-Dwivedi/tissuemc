@@ -38,3 +38,15 @@ A prediction that was wrong is as useful as one that was right. Nothing is edite
 - My hypothesis after R0 was that global atomics, at about 10⁹ per second, might be limiting. The counters weigh against that as the main limit: memory and L2 are at most 14% and 12% busy. Halving the atomics helped somewhat, so they cost something, but not most of the time.
 - Measured: only 4.75 of 32 lanes are active per warp instruction (15%). I had estimated about 16% beforehand from the distribution of steps per photon (mean 1,537, median 226, 90th percentile 7,386, maximum 18,406), because a warp runs as long as its longest photon. This is the largest loss the counters show, and the same in R0 and R1.
 - Hypothesis for the next rung, not a finding: photon relaunch (R3) should recover much of that. It is therefore built before R2 (shared-memory histograms), which targets memory traffic the counters show is not busy. R2 is not dropped, only deferred.
+
+## R3: photon relaunch (built before R2)
+
+*Design:* [`docs/rungs/R3.md`](docs/rungs/R3.md) · *Notebook:* [`notebooks/colab_gpu_r3.ipynb`](notebooks/colab_gpu_r3.ipynb)
+
+**Why this rung comes next:** R1's counters show memory and L2 at most 14% and 12% busy and only 4.75 of 32 lanes active per warp. The largest measured loss is lanes sitting idle, not memory traffic.
+
+**Prediction (written before the run):** not yet recorded. The author writes it, in their own words, before running the benchmark cells.
+
+**Result:** not run yet.
+
+**Did the prediction hold, and why?** Not run yet.

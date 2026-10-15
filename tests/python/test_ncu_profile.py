@@ -43,6 +43,13 @@ def test_parse_rejects_text_without_a_header():
         ncu_profile.parse_ncu_csv("just program output\n")
 
 
+def test_the_launch_size_is_recorded():
+    """The persistent kernel's lane count comes from the hardware, not from an assumption."""
+    assert "LaunchStats" in ncu_profile.SECTIONS
+    metrics = {metric for section, metric, _ in ncu_profile.KEY_METRICS if "Launch" in section}
+    assert {"Threads", "Registers Per Thread"} <= metrics
+
+
 def test_every_key_metric_names_a_requested_section_family():
     names = {section for section, _, _ in ncu_profile.KEY_METRICS}
     assert "Warp State Statistics" in names

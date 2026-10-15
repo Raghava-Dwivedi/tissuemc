@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 
+#include "tissuemc/batching.hpp"
 #include "tissuemc/geometry.hpp"
 #include "tissuemc/hd.hpp"
 #include "tissuemc/physics.hpp"
@@ -133,6 +134,17 @@ template <class T> struct GpuTallyR1 {
         TMC_ATOMIC_ADD(&out.tt[batch], static_cast<T>(w));
     }
 
+    // Prepare for the next photon on a lane that is reused (rung R3): clear the per-photon
+    // accumulators and counters and point them at the new photon's batch.
+    TMC_HD void begin_photon(int batch_index) {
+        batch = batch_index;
+        events = 0;
+        anomalies = 0;
+        for (int i = 0; i < kMaxLayers; ++i) {
+            absorbed_local[i] = 0.0f;
+        }
+    }
+
     // Publish the per-photon accumulators and counters: at most layers + 2 atomic adds.
     TMC_HD void flush_counters() {
         for (int l = 0; l < layers; ++l) {
@@ -172,7 +184,64 @@ TMC_HD inline void run_photon_r1(const Geometry<float> &geo, uint64_t seed, uint
     tally.flush_counters();
 }
 
-// Dispatch on the rung number, shared by the kernel and the host emulation.
+// Rung R3: persistent lanes that relaunch.
+//
+// In R0 and R1 a thread runs one photon to its end, so a warp is held up by its longest photon
+// while the other 31 lanes sit idle (the profiler measured 4.75 of 32 lanes active). Here a thread
+// is a lane that claims photons from a shared counter: as soon as its photon ends it claims the
+// next and carries on, so lanes stay busy until the photons run out. One call to advance() does at
+// most one hop-drop-spin step, so the host emulation can interleave many lanes in any order and
+// exercise the state machine the kernel runs.
+//
+// Photon i still uses the stream (seed, i) and counts toward batch_of(i) whichever lane runs it,
+// so every batch holds the same photons as in R0 and R1. The scoring is R1's: per-photon sums,
+// published once when the photon ends.
+
+// Returns the value the counter held before the increment (the next unclaimed photon number).
+TMC_HD inline unsigned long long claim_next(unsigned long long *counter) {
+#if defined(__CUDA_ARCH__)
+    return atomicAdd(counter, 1ULL);
+#else
+    return (*counter)++;
+#endif
+}
+
+template <class T> class PersistentLane {
+  public:
+    TMC_HD PersistentLane(const GpuTallyArrays<T> &arrays, int num_layers)
+        : tally_(arrays, 0, num_layers), p_{}, rng_(0, 0), has_photon_(false) {}
+
+    // Advance by at most one step. A lane without a photon first claims photon first + n for the
+    // n-th claim; once that reaches `end` there is nothing left and the lane stops (false).
+    TMC_HD bool advance(const Geometry<float> &geo, uint64_t seed, const BatchPlan &plan,
+                        uint64_t first, uint64_t end, unsigned long long *next) {
+        if (!has_photon_) {
+            const uint64_t id = first + claim_next(next);
+            if (id >= end) {
+                return false;
+            }
+            tally_.begin_photon(static_cast<int>(plan.batch_of(id)));
+            rng_ = PhotonRng(seed, id);
+            launch(p_, geo);
+            has_photon_ = true;
+        }
+        step_once(p_, geo, rng_, tally_);
+        if (p_.dead) {
+            tally_.flush_counters();
+            has_photon_ = false;
+        }
+        return true;
+    }
+
+  private:
+    GpuTallyR1<T> tally_;
+    Photon<float> p_;
+    PhotonRng rng_;
+    bool has_photon_;
+};
+
+// Dispatch on the rung number, shared by the kernel and the host emulation. Rung 3 does not go
+// through here: it is not one photon per call (see PersistentLane).
 template <class T>
 TMC_HD inline void run_photon(int rung, const Geometry<float> &geo, uint64_t seed, uint64_t id,
                               int batch, const GpuTallyArrays<T> &arrays) {

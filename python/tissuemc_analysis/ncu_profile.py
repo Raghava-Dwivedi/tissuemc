@@ -28,6 +28,7 @@ SECTIONS = [
     "Occupancy",
     "InstructionStats",
     "MemoryWorkloadAnalysis",
+    "LaunchStats",
 ]
 
 # (section, metric name as Nsight Compute prints it, what it tells us)
@@ -66,6 +67,8 @@ KEY_METRICS = [
     ("Occupancy", "Achieved Occupancy", "warps resident per SM, % of the maximum"),
     ("Occupancy", "Theoretical Occupancy", "the limit set by registers and block size"),
     ("Instruction Statistics", "Executed Ipc Active", "instructions per cycle while active"),
+    ("Launch Statistics", "Threads", "threads launched (the lanes, for the persistent kernel)"),
+    ("Launch Statistics", "Registers Per Thread", "registers per thread; sets the occupancy limit"),
 ]
 
 

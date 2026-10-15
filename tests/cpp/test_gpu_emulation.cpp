@@ -57,10 +57,10 @@ struct Emulated {
     std::vector<unsigned long long> events, anomalies;
 };
 
-// Runs the kernel body for every photon on the host, with tallies of precision T.
-template <class T>
-Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
-                 int rung = 0) {
+// Sets up the tally arrays, lets `run` fill them, and collects the result. `run` is the host
+// stand-in for a kernel launch: it receives the geometry, the batch plan and the arrays.
+template <class T, class Runner>
+Emulated emulate_with(const RunSpec &spec, uint64_t photons, uint64_t batches, Runner &&run) {
     const Geometry<float> geo = make_geometry<float>(spec);
     const BatchPlan plan = BatchPlan::make(photons, batches);
     const size_t layers = static_cast<size_t>(geo.num_layers);
@@ -71,14 +71,59 @@ Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64
     out.anomalies.assign(batches, 0);
     GpuTallyArrays<T> arrays{rd.data(), tt.data(),         absorbed.data(),     az.data(),
                              rr.data(), out.events.data(), out.anomalies.data()};
-    for (uint64_t id = 0; id < photons; ++id) {
-        run_photon(rung, geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
-    }
+    run(geo, plan, arrays);
     out.rd.assign(rd.begin(), rd.end());
     out.tt.assign(tt.begin(), tt.end());
     out.absorbed.assign(absorbed.begin(), absorbed.end());
     out.az.assign(az.begin(), az.end());
     return out;
+}
+
+// Runs the kernel body for every photon on the host, with tallies of precision T.
+template <class T>
+Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
+                 int rung = 0) {
+    return emulate_with<T>(
+        spec, photons, batches,
+        [&](const Geometry<float> &geo, const BatchPlan &plan, const GpuTallyArrays<T> &arrays) {
+            for (uint64_t id = 0; id < photons; ++id) {
+                run_photon(rung, geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
+            }
+        });
+}
+
+// Rung 3 on the host: `lanes` virtual threads, each advanced one step at a time. The order in
+// which lanes are advanced is round-robin, or pseudo-random when `shuffled`; the real GPU's order
+// is neither, which is the point: the result must not depend on it. `claimed` receives the final
+// value of the shared photon counter.
+template <class T>
+Emulated emulate_persistent(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
+                            size_t lanes, bool shuffled, unsigned long long *claimed = nullptr) {
+    return emulate_with<T>(
+        spec, photons, batches,
+        [&](const Geometry<float> &geo, const BatchPlan &plan, const GpuTallyArrays<T> &arrays) {
+            std::vector<PersistentLane<T>> pool(lanes, PersistentLane<T>(arrays, geo.num_layers));
+            std::vector<char> live(lanes, 1);
+            size_t remaining = lanes;
+            unsigned long long next = 0;
+            uint64_t lcg = 0x9e3779b97f4a7c15ull;
+            size_t i = 0;
+            while (remaining > 0) {
+                if (shuffled) {
+                    lcg = lcg * 6364136223846793005ull + 1442695040888963407ull;
+                    i = static_cast<size_t>((lcg >> 33) % lanes);
+                } else {
+                    i = (i + 1) % lanes;
+                }
+                if (live[i] && !pool[i].advance(geo, seed, plan, 0, photons, &next)) {
+                    live[i] = 0;
+                    --remaining;
+                }
+            }
+            if (claimed != nullptr) {
+                *claimed = next;
+            }
+        });
 }
 
 RunResult cpu_float32(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed) {
@@ -180,4 +225,95 @@ TEST_CASE("rung 1 (per-photon accumulation) matches the CPU engine, with float p
     }
     // The depth profile is untouched by this rung.
     CHECK(r1.az == r0.az);
+}
+
+TEST_CASE("rung 3 with a single lane is rung 1, bit for bit") {
+    // One lane claims photons 0, 1, 2, ... in order and scores them exactly as rung 1 does, so
+    // every double addition happens in the same order and the results are identical, not close.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r1 = emulate<double>(spec, photons, batches, 11, 1);
+    const Emulated r3 = emulate_persistent<double>(spec, photons, batches, 11, 1, false);
+    CHECK(r3.events == r1.events);
+    CHECK(r3.anomalies == r1.anomalies);
+    CHECK(r3.rd == r1.rd);
+    CHECK(r3.tt == r1.tt);
+    CHECK(r3.absorbed == r1.absorbed);
+    CHECK(r3.az == r1.az);
+}
+
+TEST_CASE("rung 3 gives the same per-batch results whatever the lanes' interleaving") {
+    // Many lanes, advanced round-robin and in a pseudo-random order. Which lane runs which photon
+    // changes, and so does the order of the double additions, but not the photons in each batch:
+    // events must match exactly, and the sums to double rounding.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r1 = emulate<double>(spec, photons, batches, 11, 1);
+    const size_t layers = spec.layers.size();
+    struct Case {
+        size_t lanes;
+        bool shuffled;
+    };
+    for (const Case c : {Case{7, false}, Case{64, false}, Case{37, true}, Case{500, true}}) {
+        CAPTURE(c.lanes);
+        CAPTURE(c.shuffled);
+        const Emulated r3 =
+            emulate_persistent<double>(spec, photons, batches, 11, c.lanes, c.shuffled);
+        for (uint64_t b = 0; b < batches; ++b) {
+            CAPTURE(b);
+            CHECK(r3.events[b] == r1.events[b]);
+            CHECK(r3.anomalies[b] == 0);
+            CHECK(std::fabs(r3.rd[b] - r1.rd[b]) < 1e-12 * r1.rd[b]);
+            CHECK(std::fabs(r3.tt[b] - r1.tt[b]) < 1e-12 * r1.tt[b]);
+            for (size_t l = 0; l < layers; ++l) {
+                const double expected = r1.absorbed[b * layers + l];
+                CHECK(std::fabs(r3.absorbed[b * layers + l] - expected) < 1e-12 * expected);
+            }
+        }
+        for (size_t i = 0; i < r1.az.size(); ++i) {
+            CHECK(std::fabs(r3.az[i] - r1.az[i]) <= 1e-12 * (1.0 + r1.az[i]));
+        }
+    }
+}
+
+TEST_CASE("rung 3 agrees with the CPU engine on identical photons") {
+    // The same check as for rungs 0 and 1, against the CPU's float32 path, with an interleaving
+    // that looks nothing like the CPU's order.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r3 = emulate_persistent<double>(spec, photons, batches, 11, 61, true);
+    const RunResult cpu = cpu_float32(spec, photons, batches, 11);
+    const size_t layers = spec.layers.size();
+    for (uint64_t b = 0; b < batches; ++b) {
+        CAPTURE(b);
+        CHECK(r3.events[b] == cpu.batches[b].events);
+        CHECK(r3.anomalies[b] == 0);
+        CHECK(std::fabs(r3.rd[b] - cpu.batches[b].rd) < 1e-9 * cpu.batches[b].rd);
+        CHECK(std::fabs(r3.tt[b] - cpu.batches[b].tt) < 1e-9 * cpu.batches[b].tt);
+        for (size_t l = 0; l < layers; ++l) {
+            const double expected = cpu.batches[b].absorbed[l];
+            CHECK(std::fabs(r3.absorbed[b * layers + l] - expected) < 1e-6 * expected);
+        }
+    }
+}
+
+TEST_CASE("rung 3 claims every photon once and each lane stops after one failed claim") {
+    // The counter ends at photons + lanes exactly when no photon was claimed twice or skipped and
+    // every lane stopped the first time it found nothing left. It includes the case of more lanes
+    // than photons, where some lanes never run anything.
+    const RunSpec spec = v3();
+    struct Case {
+        uint64_t photons, batches;
+        size_t lanes;
+    };
+    for (const Case c : {Case{1, 1, 1}, Case{1, 1, 9}, Case{50, 5, 128}, Case{1003, 7, 32}}) {
+        CAPTURE(c.photons);
+        CAPTURE(c.lanes);
+        unsigned long long claimed = 0;
+        const Emulated r3 =
+            emulate_persistent<double>(spec, c.photons, c.batches, 3, c.lanes, true, &claimed);
+        CHECK(claimed == c.photons + c.lanes);
+        const Emulated r1 = emulate<double>(spec, c.photons, c.batches, 3, 1);
+        CHECK(r3.events == r1.events);
+    }
 }
