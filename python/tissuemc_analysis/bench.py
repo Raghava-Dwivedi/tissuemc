@@ -196,6 +196,7 @@ def run_gpu_benchmark(
     warmup: int,
     seed: int,
     gpu_tally: str = "float64",
+    rung: int = 0,
 ) -> dict:
     """Time the GPU engine. Transport is deterministic, so every repeat must agree.
 
@@ -214,6 +215,7 @@ def run_gpu_benchmark(
             str(batches),
         ]
         cmd += ["--seed", str(seed), "--engine", "cuda", "--gpu-tally", gpu_tally]
+        cmd += ["--rung", str(rung)]
         run = _run_engine_json(cmd)
         runs.append(run)
         if i >= warmup:
@@ -234,6 +236,7 @@ def run_gpu_benchmark(
     k = summarize(kernel)
     events = first["events"]
     return {
+        "rung": rung,
         "device": first.get("device", ""),
         "tally_precision": first.get("tally_precision", gpu_tally),
         "events": events,
@@ -284,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output", type=Path, default=Path("results/cpu-scaling.json"))
     ap.add_argument("--skip-validation", action="store_true", help="NOT for published numbers")
     ap.add_argument("--engine", choices=["cpu", "cuda"], default="cpu", help="what to benchmark")
+    ap.add_argument("--rung", type=int, default=0, help="GPU optimization rung (cuda only)")
     ap.add_argument(
         "--gpu-tally", choices=["float64", "float32"], default="float64", help="GPU running totals"
     )
@@ -353,12 +357,12 @@ def main_gpu(args: argparse.Namespace) -> int:
     config = args.config or root / "configs" / "bench" / "tissue_g09.mci"
     output = args.output
     if output == Path("results/cpu-scaling.json"):
-        output = Path("results/gpu-r0.json")
+        output = Path(f"results/gpu-r{args.rung}.json")
     validated = False
     if not args.skip_validation:
         print("Validating the GPU engine before measuring anything ...")
         v_args = ["--binary", str(binary), "--photons", "1000000", "--engine", "cuda"]
-        v_args += ["--gpu-tally", args.gpu_tally]
+        v_args += ["--gpu-tally", args.gpu_tally, "--rung", str(args.rung)]
         if validate.main(v_args) != 0:
             print("benchmark aborted: the GPU engine fails validation", file=sys.stderr)
             return 1
@@ -366,10 +370,18 @@ def main_gpu(args: argparse.Namespace) -> int:
     photons = args.photons if args.photons != 300_000 else 4_000_000
     print(f"\nBenchmarking {config.name} on the GPU: {photons} photons, {args.batches} batches")
     body = run_gpu_benchmark(
-        binary, config, photons, args.batches, args.repeats, args.warmup, args.seed, args.gpu_tally
+        binary,
+        config,
+        photons,
+        args.batches,
+        args.repeats,
+        args.warmup,
+        args.seed,
+        args.gpu_tally,
+        args.rung,
     )
     data = {
-        "benchmark": "gpu-r0",
+        "benchmark": f"gpu-r{args.rung}",
         "workload": config.name,
         "photons": photons,
         "batches": args.batches,
@@ -382,7 +394,8 @@ def main_gpu(args: argparse.Namespace) -> int:
         "engine_version": _run([str(binary), "--version"]),
         "cpu_reference": cpu_reference(root),
         "notes": [
-            "Rung R0: one thread per photon, float32 transport, global atomic tallies.",
+            "Rung 0: one thread per photon, float32 transport, global atomic tallies. "
+            "Rung 1: absorbed weight per layer accumulated per photon.",
             "Throughput uses kernel time (CUDA events) and excludes setup and copies.",
             "The CPU reference is a different machine; the comparison is context, not a "
             "like-for-like speedup.",

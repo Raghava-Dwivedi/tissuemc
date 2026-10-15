@@ -69,6 +69,7 @@ def run_engine(
     precision: str = "float64",
     engine: str = "cpu",
     gpu_tally: str = "float64",
+    rung: int = 0,
 ) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.json"
@@ -78,7 +79,7 @@ def run_engine(
             "--seed", str(seed), "--precision", precision, "--output", str(out),
         ]  # fmt: skip
         if engine != "cpu":
-            cmd += ["--engine", engine, "--gpu-tally", gpu_tally]
+            cmd += ["--engine", engine, "--gpu-tally", gpu_tally, "--rung", str(rung)]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise SystemExit(f"engine failed ({proc.returncode}): {proc.stderr.strip()}")
@@ -185,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         default="float64",
         help="precision of the GPU's running totals; float32 is expected to fail conservation",
     )
+    ap.add_argument("--rung", type=int, default=0, help="GPU optimization rung to test")
     ap.add_argument("--binary", type=Path, help="use this engine binary instead of building one")
     ap.add_argument("--report", type=Path, help="write all comparisons to this JSON file")
     args = ap.parse_args(argv)
@@ -218,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.precision,
                 args.engine,
                 args.gpu_tally,
+                args.rung,
             )
             if not summary_matches_engine(run):
                 engine_agrees = False

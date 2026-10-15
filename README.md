@@ -2,12 +2,12 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) is written and its per-photon kernel body is tested against the CPU engine on the host, but it has **not been run on a GPU yet**: no GPU results are claimed. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is written and tested on the host, but has not run on a GPU, so no optimization result is claimed yet. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
 - a multithreaded C++ CPU engine (float64), **done**, and
-- a CUDA engine (float32 transport), **rung R0 written, not yet run on a GPU** (see [`docs/rungs/R0.md`](docs/rungs/R0.md) and [`LOG.md`](LOG.md)).
+- a CUDA engine (float32 transport), **rung R0 done; later rungs in progress** (see [`docs/rungs/R0.md`](docs/rungs/R0.md) and [`LOG.md`](LOG.md)).
 
 Both engines share one physics code path (`include/tissuemc/physics.hpp`). Nothing is benchmarked until it passes validation against published reference values. [`docs/DESIGN.md`](docs/DESIGN.md) has the full design.
 
@@ -102,6 +102,28 @@ Caveats, as recorded in the result file:
 - macOS cannot pin threads to cores. Threads beyond 8 also run on the slower efficiency cores, which is why 12 threads gain only 9% over 8.
 - About 1.1 cores of unrelated background activity were running throughout (total background CPU use was 110% before and 104% after), so the 12-thread figure is somewhat pessimistic.
 - One machine, one compiler, one workload.
+
+## GPU, rung R0 (Tesla T4)
+
+R0 is the deliberately naive baseline: one thread per photon, float32 transport, global atomic tallies (running totals in `double`). Design: [`docs/rungs/R0.md`](docs/rungs/R0.md). It ran on a free Colab Tesla T4 (CUDA 13.0) at commit `a3e9804`; the record is [`results/gpu-r0-summary.json`](results/gpu-r0-summary.json), the pasted final summary of [`notebooks/colab_gpu.ipynb`](notebooks/colab_gpu.ipynb). The per-file outputs from that session were not saved. Prediction log: [`LOG.md`](LOG.md); **no prediction was recorded before this run**, and the log says so.
+
+- **Validation:** all 24 checks pass on the GPU engine, the same published values and independent oracle as the CPU engine.
+- **Agreement with the CPU on identical photons** (CPU float32 against GPU, same seed and batches; limits fixed before any GPU run):
+
+| Gap | Measured | Limit |
+|---|---|---|
+| R_d total, in standard errors | 0.0013 | 0.25 |
+| T_t total, in standard errors | 0.0088 | 0.25 |
+| R_d worst per-batch relative gap | 0.000080 | 0.005 |
+| T_t worst per-batch relative gap | 0.000243 | 0.005 |
+| Event count, relative gap | 0.0000023 | 0.001 |
+
+- **Float32 running totals, as a demonstration:** R_d and T_t still pass, but energy conservation fails (z = −82.5), so a float32 total is not safe for the absorbed weight. Measured on the host first: fine up to about 10⁴ photons per batch and 1.6% low at 4×10⁵.
+- **Throughput**, 4,000,000 photons of the tissue-like workload in 240 batches, median kernel time 11.60 s over 5 repeats: **533.6 million events/s** (0.345 million photons/s). Kernel time excludes setup and copies.
+
+The CPU figures from [`results/cpu-scaling.json`](results/cpu-scaling.json), on a different machine (Apple M4 Pro), are 33.4 million events/s on one thread and 253.5 on 12 threads, so R0 is about 2.1× the 12-thread CPU. That ratio is context, not a like-for-like speedup.
+
+Caveats: one Colab session; the five kernel times rise steadily from 11.33 s to 11.90 s (+5%), cause not checked (GPU clock throttling is one possibility); no comparison with MCX yet; R0 is the reference point for later rungs, not a good kernel.
 
 ## Development process
 

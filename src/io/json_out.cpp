@@ -243,6 +243,9 @@ void write_json(const RunResult &run, std::ostream &out) {
     j.key("tally_precision");
     j.str(run.tally_precision);
     j.raw(",");
+    j.key("rung");
+    j.integer(static_cast<uint64_t>(run.rung));
+    j.raw(",");
     j.key("events");
     j.integer(run.events());
     j.raw(",");

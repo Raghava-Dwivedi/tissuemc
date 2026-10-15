@@ -89,6 +89,8 @@ int run_command(int argc, char **argv) {
                              e.c_str());
                 return 2;
             }
+        } else if (a == "--rung") {
+            opt.rung = static_cast<int>(parse_count("--rung", value("--rung")));
         } else if (a == "--gpu-tally") {
             const std::string p = value("--gpu-tally");
             if (p == "float64") {
@@ -140,8 +142,8 @@ int run_command(int argc, char **argv) {
                     static_cast<unsigned long long>(res.photons()), res.batches.size(),
                     res.wall_seconds, res.engine.c_str(), res.precision.c_str());
         if (!res.device.empty()) {
-            std::printf("  device %s, kernel %.3f s, %s totals\n", res.device.c_str(),
-                        res.kernel_seconds, res.tally_precision.c_str());
+            std::printf("  device %s, rung %d, kernel %.3f s, %s totals\n", res.device.c_str(),
+                        res.rung, res.kernel_seconds, res.tally_precision.c_str());
         }
         std::printf("  specular R_sp = %.6f\n", res.specular);
         std::printf("  diffuse  R_d  = %.6f +/- %.6f\n", rd.mean, rd.se);

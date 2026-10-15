@@ -59,7 +59,8 @@ struct Emulated {
 
 // Runs the kernel body for every photon on the host, with tallies of precision T.
 template <class T>
-Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed) {
+Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
+                 int rung = 0) {
     const Geometry<float> geo = make_geometry<float>(spec);
     const BatchPlan plan = BatchPlan::make(photons, batches);
     const size_t layers = static_cast<size_t>(geo.num_layers);
@@ -71,7 +72,7 @@ Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64
     GpuTallyArrays<T> arrays{rd.data(), tt.data(),         absorbed.data(),     az.data(),
                              rr.data(), out.events.data(), out.anomalies.data()};
     for (uint64_t id = 0; id < photons; ++id) {
-        run_photon_r0(geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
+        run_photon(rung, geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
     }
     out.rd.assign(rd.begin(), rd.end());
     out.tt.assign(tt.begin(), tt.end());
@@ -154,4 +155,29 @@ TEST_CASE("float32 tallies lose absorbed weight once batches are large") {
         CHECK(std::fabs(f32.rd[b] - f64.rd[b]) < 1e-3 * f64.rd[b]);
         CHECK(std::fabs(f32.tt[b] - f64.tt[b]) < 1e-3 * f64.tt[b]);
     }
+}
+
+TEST_CASE("rung 1 (per-photon accumulation) matches the CPU engine, with float per-photon sums") {
+    // Same photons and transport, so identical events and identical R_d and T_t. Absorbed weight
+    // is summed in float within each photon before being published, so it differs from the CPU's
+    // compensated double by float rounding: measured about 5e-8 relative; the bound leaves 20x.
+    const RunSpec spec = v3();
+    const uint64_t photons = 40'000, batches = 8;
+    const Emulated r1 = emulate<double>(spec, photons, batches, 11, 1);
+    const Emulated r0 = emulate<double>(spec, photons, batches, 11, 0);
+    const RunResult cpu = cpu_float32(spec, photons, batches, 11);
+    const size_t layers = spec.layers.size();
+    for (uint64_t b = 0; b < batches; ++b) {
+        CAPTURE(b);
+        CHECK(r1.events[b] == cpu.batches[b].events);
+        CHECK(r1.anomalies[b] == 0);
+        CHECK(r1.rd[b] == r0.rd[b]);
+        CHECK(r1.tt[b] == r0.tt[b]);
+        for (size_t l = 0; l < layers; ++l) {
+            const double expected = cpu.batches[b].absorbed[l];
+            CHECK(std::fabs(r1.absorbed[b * layers + l] - expected) < 1e-6 * expected);
+        }
+    }
+    // The depth profile is untouched by this rung.
+    CHECK(r1.az == r0.az);
 }

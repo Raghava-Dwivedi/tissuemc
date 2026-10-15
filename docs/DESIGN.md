@@ -171,14 +171,14 @@ It supplies two reference values that depend on no published table:
 Each rung is one small, reviewable change. For every rung:
 
 1. The change ships with a one-page explainer.
-2. **Raghava writes his prediction in `LOG.md`:** expected effect and why.
+2. **A prediction is recorded in `LOG.md` before the run:** expected effect and why, in the author's words, informed by the measurements of the rung before. (R0 was run without one; the log says so.)
 3. Raghava runs one Colab cell. It builds the code, validates V1–V3, benchmarks, and writes `results/rung-N.json`.
 4. Raghava commits the result and writes a short note on whether his prediction held.
 
 | Rung | Change | What it teaches | Measured by |
 |---|---|---|---|
-| **R0** | Naive. One thread per photon; per-thread Philox RNG; float32 math; tallies accumulated with float32 `atomicAdd` in global memory | Baseline GPU execution model | photons/s; validation z-scores |
-| **R1** | **Precision fix.** Show that a float32 tally stops growing after about 2²⁴ equal additions. Replace it with 64-bit fixed-point integer atomics, or with per-thread partial sums flushed as float64 | Floating-point accumulation error | z-scores before and after; a demo of the stall |
+| **R0** | Naive. One thread per photon; per-thread Philox RNG; float32 transport; tallies accumulated with **float64** `atomicAdd` in global memory. A float32-totals mode demonstrates the stall: measured on the host (absorbed weight 1.6% low at 4×10⁵ photons per batch) and on the GPU (energy conservation fails, z = −82.5) | Baseline GPU execution model; why float32 totals are unsafe | photons/s; validation z-scores; the float32 demonstration |
+| **R1** | **Fewer atomics.** R0 does two global atomic adds per absorption event (about 10⁹ per second at R0's speed). Absorbed weight per layer is accumulated in the thread and flushed once per photon; the depth and radius profiles stay global until R2 | The cost of global atomics | photons/s; atomics per photon |
 | **R2** | **Atomic privatization.** Each block keeps its own histograms (A(z), R_d(r)) in shared memory and flushes them to global memory once | Contention and the memory hierarchy | photons/s; atomics per photon |
 | **R3** | **Photon relaunch / persistent threads.** When a photon dies, its thread pulls the next photon ID from a global counter instead of idling | Warp divergence | photons/s; **active-lane fraction** sampled in-kernel with `__popc(__activemask())` |
 | **R4** | **Math and launch tuning.** Fast intrinsics (`__expf`, `__logf`, `sincosf`); sweep block sizes for occupancy | Instruction cost vs. accuracy; occupancy | photons/s; whether z-scores still pass |

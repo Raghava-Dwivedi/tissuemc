@@ -1,0 +1,102 @@
+{
+ "provenance": "The final-cell summary of notebooks/colab_gpu.ipynb, run by the repository owner on a free Colab T4 on 2026-10-14 at the commit named below, and pasted in. The per-file outputs written inside that Colab session (results/gpu-*.json) were not saved, so this summary is the only record of the run. The 'summary' value below is the pasted block, unchanged.",
+ "rung": 0,
+ "prediction_recorded_before_run": false,
+ "summary": {
+  "commit": "a3e9804b70262d38c703beb419aed1d49254f622",
+  "device": "Tesla T4 (sm_75)",
+  "hardware": {
+   "os": "Linux 6.6.122+",
+   "machine": "x86_64",
+   "logical_cpus": 2,
+   "cpu": "Intel(R) Xeon(R) CPU @ 2.00GHz",
+   "gpu": "Tesla T4",
+   "driver": "580.82.07",
+   "gpu_memory": "15360 MiB",
+   "nvcc": "Build cuda_13.0.r13.0/compiler.36424714_0"
+  },
+  "validation": {
+   "checks": 24,
+   "passed": 24,
+   "failed": []
+  },
+  "cross_engine": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "float32_totals_demo": [
+   {
+    "quantity": "rd",
+    "z": -0.14,
+    "passed": true
+   },
+   {
+    "quantity": "rd",
+    "z": 1.26,
+    "passed": true
+   },
+   {
+    "quantity": "tt",
+    "z": -2.53,
+    "passed": true
+   },
+   {
+    "quantity": "tt",
+    "z": -2.58,
+    "passed": true
+   },
+   {
+    "quantity": "conservation",
+    "z": -82.54,
+    "passed": false
+   }
+  ],
+  "benchmark": {
+   "photons": 4000000,
+   "batches": 240,
+   "validated_first": true,
+   "kernel_seconds": [
+    11.3275263671875,
+    11.461822265625,
+    11.5997333984375,
+    11.7472236328125,
+    11.90092578125
+   ],
+   "median_kernel_s": 11.5997333984375,
+   "million_events_per_s": 533.6,
+   "million_photons_per_s": 0.345,
+   "cpu_reference_million_events_per_s": {
+    "1": 33.4,
+    "2": 63.4,
+    "4": 123.0,
+    "8": 232.7,
+    "12": 253.5
+   }
+  }
+ }
+}

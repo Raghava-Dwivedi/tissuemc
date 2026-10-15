@@ -28,17 +28,17 @@ namespace {
 constexpr int kBlockSize = 128;
 constexpr uint64_t kPhotonsPerLaunch = uint64_t(1) << 26;
 
-// R0: every thread simulates one photon from launch to death and adds its results straight into
-// the global tallies.
+// Every thread simulates one photon from launch to death. Rung 0 adds each result straight into
+// the global tallies; rung 1 publishes per-photon sums once (see gpu_tally.hpp).
 template <class T>
-__global__ void r0_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed, uint64_t first,
-                          uint64_t count, GpuTallyArrays<T> arrays) {
+__global__ void photon_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed, uint64_t first,
+                              uint64_t count, GpuTallyArrays<T> arrays, int rung) {
     const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
     if (i >= count) {
         return;
     }
     const uint64_t id = first + i;
-    run_photon_r0(geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
+    run_photon(rung, geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
 }
 
 template <class T> class DeviceArray {
@@ -90,7 +90,8 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     for (uint64_t first = 0; first < run.photons; first += kPhotonsPerLaunch) {
         const uint64_t count = std::min(kPhotonsPerLaunch, run.photons - first);
         const unsigned blocks = static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
-        r0_kernel<T><<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays);
+        photon_kernel<T>
+            <<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays, opt.rung);
         CUDA_CHECK(cudaGetLastError());
     }
     CUDA_CHECK(cudaEventRecord(stop));
@@ -109,6 +110,7 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     RunResult result;
     result.spec = run;
     result.engine = "cuda";
+    result.rung = opt.rung;
     result.precision = "float32";
     result.tally_precision = sizeof(T) == sizeof(double) ? "float64" : "float32";
     result.seed = opt.seed;
@@ -154,6 +156,9 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     }
     if (static_cast<uint64_t>(opt.batches) > run.photons) {
         throw ConfigError("batches cannot exceed the number of photons");
+    }
+    if (opt.rung != 0 && opt.rung != 1) {
+        throw ConfigError("rung must be 0 or 1");
     }
     if (!cuda_available()) {
         throw std::runtime_error("no usable CUDA device found");

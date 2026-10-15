@@ -82,3 +82,32 @@ def test_cross_check_readme_states_the_failure_and_its_limit():
     xo = json.loads((ROOT / "results" / "mcml-crosscheck-v3-xoshiro.json").read_text())
     assert xo["original_rng"] == "xoshiro"
     assert all(c["passed"] for c in xo["comparisons"])
+
+
+def test_gpu_r0_readme_numbers_match_the_committed_summary():
+    data = json.loads((ROOT / "results" / "gpu-r0-summary.json").read_text())
+    assert data["prediction_recorded_before_run"] is False
+    summary = data["summary"]
+    gaps = {k: v[0] for k, v in summary["cross_engine"]["gaps"].items()}
+    b = summary["benchmark"]
+    for text in (
+        f"{b['million_events_per_s']} million events/s",
+        f"{b['million_photons_per_s']} million photons/s",
+        f"median kernel time {b['median_kernel_s']:.2f} s",
+        f"{gaps['rd: total gap / standard error']:.4f}",
+        f"{gaps['tt: total gap / standard error']:.4f}",
+        f"{gaps['rd: worst per-batch relative gap']:.6f}",
+        f"{gaps['tt: worst per-batch relative gap']:.6f}",
+        f"{gaps['events: relative gap']:.7f}",
+        f"all {summary['validation']['checks']} checks pass on the GPU engine",
+    ):
+        assert text in README, text
+    assert summary["validation"]["failed"] == []
+    assert summary["cross_engine"]["agree"] is True
+    assert summary["benchmark"]["validated_first"] is True
+
+
+def test_the_log_does_not_claim_a_prediction_that_was_not_made():
+    log = (ROOT / "LOG.md").read_text()
+    assert "none was recorded" in log
+    assert "pending" not in log.lower()

@@ -17,6 +17,7 @@ tissuemc-bench = "tissuemc_analysis.bench:main"
 tissuemc-plot = "tissuemc_analysis.plots:main"
 tissuemc-compare-mcml = "tissuemc_analysis.mcml_compare:main"
 tissuemc-cross-engine = "tissuemc_analysis.cross_engine:main"
+tissuemc-profile = "tissuemc_analysis.ncu_profile:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6", "cmake>=3.24", "ninja>=1.11", "clang-format>=18", "matplotlib>=3.8"]
