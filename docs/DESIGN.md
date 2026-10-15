@@ -171,7 +171,7 @@ It supplies two reference values that depend on no published table:
 Each rung is one small, reviewable change. For every rung:
 
 1. The change ships with a one-page explainer.
-2. **A prediction is recorded in `LOG.md` before the run:** expected effect and why, in the author's words, informed by the measurements of the rung before. (R0 was run without one; the log says so.)
+2. **A prediction is recorded in `LOG.md` before the run:** expected effect and why, in the author's words, informed by the measurements of the rung before. (R0 and R1 were run without one; the log says so.)
 3. Raghava runs one Colab cell. It builds the code, validates V1–V3, benchmarks, and writes `results/rung-N.json`.
 4. Raghava commits the result and writes a short note on whether his prediction held.
 
@@ -182,6 +182,8 @@ Each rung is one small, reviewable change. For every rung:
 | **R2** | **Atomic privatization.** Each block keeps its own histograms (A(z), R_d(r)) in shared memory and flushes them to global memory once | Contention and the memory hierarchy | photons/s; atomics per photon |
 | **R3** | **Photon relaunch / persistent threads.** When a photon dies, its thread pulls the next photon ID from a global counter instead of idling | Warp divergence | photons/s; **active-lane fraction** sampled in-kernel with `__popc(__activemask())` |
 | **R4** | **Math and launch tuning.** Fast intrinsics (`__expf`, `__logf`, `sincosf`); sweep block sizes for occupancy | Instruction cost vs. accuracy; occupancy | photons/s; whether z-scores still pass |
+
+**Order change after R1.** Rung numbers are names, not a schedule. R1's hardware counters (memory throughput 14%, L2 12%, 4.75 of 32 lanes active per warp) show warp divergence, not memory traffic, as the main loss, so **R3 is built next and R2 is deferred**. R2 stays in the ladder; whether it still helps is measured once divergence has been addressed.
 
 **Profiling.** If Nsight Compute (`ncu`) hardware counters are available on the free tier (tested in the week-1 smoke test), the study adds counter evidence. If not, everything above still works with in-kernel counters and `clock64()` timing, so no claim depends on `ncu`.
 

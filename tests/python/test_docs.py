@@ -111,3 +111,47 @@ def test_the_log_does_not_claim_a_prediction_that_was_not_made():
     log = (ROOT / "LOG.md").read_text()
     assert "none was recorded" in log
     assert "pending" not in log.lower()
+
+
+def test_gpu_r1_readme_numbers_match_the_committed_summary():
+    data = json.loads((ROOT / "results" / "gpu-r1-summary.json").read_text())
+    assert data["prediction_recorded_before_run"] is False
+    assert data["rung"] == 1
+    s = data["summary"]
+    assert s["validation_r1"]["failed"] == []
+    assert s["cross_engine_r1"]["agree"] is True
+    b = s["benchmark"]
+    for run in b.values():
+        assert run["validated_first"] is True
+    for label, key in (("R0 (first)", "r0_first"), ("R1", "r1"), ("R0 (again)", "r0_again")):
+        row = f"| {label} | {b[key]['median_kernel_s']:.3f} s | {b[key]['million_events_per_s']} |"
+        assert row.replace("**", "") in README.replace("**", ""), row
+    r0_mean = (b["r0_first"]["median_kernel_s"] + b["r0_again"]["median_kernel_s"]) / 2
+    speedup = r0_mean / b["r1"]["median_kernel_s"]
+    assert f"R1 is about {round(100 * (speedup - 1))}% faster than R0" in README.replace("**", "")
+    c0, c1 = s["counters"]["r0"], s["counters"]["r1"]
+    for name in (
+        "Avg. Active Threads Per Warp",
+        "Compute (SM) Throughput",
+        "Memory Throughput",
+        "L2 Cache Throughput",
+        "Warp Cycles Per Issued Instruction",
+        "Achieved Occupancy",
+    ):
+        assert f"| {c0[name]} | {c1[name]} |" in README, name
+
+
+def test_gpu_r1_log_matches_the_committed_summary():
+    log = (ROOT / "LOG.md").read_text().replace("**", "")
+    b = json.loads((ROOT / "results" / "gpu-r1-summary.json").read_text())["summary"]["benchmark"]
+    for label, key in (("R0", "r0_first"), ("R1", "r1"), ("R0 again", "r0_again")):
+        run = b[key]
+        text = f"{label} {run['median_kernel_s']:.3f} s ({run['million_events_per_s']}"
+        assert text in log, text
+
+
+def test_readme_does_not_claim_predictions_the_log_says_were_not_made():
+    log = (ROOT / "LOG.md").read_text()
+    if log.count("none was recorded") > 0:
+        assert "writes each prediction before it is tested" not in README
+        assert "none was recorded" in README or "for R0 and R1 none was recorded" in README
