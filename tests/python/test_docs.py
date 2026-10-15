@@ -155,3 +155,24 @@ def test_readme_does_not_claim_predictions_the_log_says_were_not_made():
     if log.count("none was recorded") > 0:
         assert "writes each prediction before it is tested" not in README
         assert "none was recorded" in README or "for R0 and R1 none was recorded" in README
+
+
+def test_saved_r1_notebook_outputs_match_the_committed_summary():
+    """The notebook saved from Colab keeps the printed output; it must agree with the summary."""
+    nb = json.loads((ROOT / "notebooks" / "colab_gpu_r1.ipynb").read_text())
+    printed = "\n".join(
+        "".join(o.get("text", []))
+        for cell in nb["cells"]
+        for o in cell.get("outputs", [])
+        if o.get("output_type") == "stream"
+    )
+    assert not any(
+        o.get("output_type") == "error" for cell in nb["cells"] for o in cell.get("outputs", [])
+    )
+    s = json.loads((ROOT / "results" / "gpu-r1-summary.json").read_text())["summary"]
+    for key in ("r0_first", "r1", "r0_again"):
+        events = s["benchmark"][key]["million_events_per_s"]
+        assert f"{events} million events/s (median kernel)" in printed, key
+    for name, v0 in s["counters"]["r0"].items():
+        line = next(x for x in printed.splitlines() if x.strip().startswith(name))
+        assert v0.replace(" cycle", "") in line, (name, line)
