@@ -567,3 +567,11 @@ def test_the_log_records_the_ablation_and_does_not_oversell_it():
         "the diagnostic is the target, not the result" in log.lower()
         or "target, not the result" in log
     )
+
+
+def test_the_ablation_is_not_presented_as_general():
+    """The 12x depends on this benchmark's 40-bin depth profile; the docs must say so."""
+    config = (ROOT / "configs" / "bench" / "tissue_g09.mci").read_text()
+    assert "40 50 1" in config  # nz = 40, nr = 50: the premise of the explanation
+    assert "40 bins" in README and "was not measured" in README.replace("\n", " ")
+    assert "coarse depth profile" in (ROOT / "docs" / "rungs" / "R7.md").read_text()

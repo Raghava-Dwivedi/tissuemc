@@ -291,6 +291,7 @@ The diagnostic ([`docs/diagnostics.md`](docs/diagnostics.md)) runs R6 with the d
 
 - **The floor that R1, R5 and R6 shared was the per-event atomic add into the depth profile.** It explains why R1, R5 and R6, which differ in local memory, instruction count and relaunch, took the same time in the previous session, and why R6's time did not move between sessions: it is a fixed hardware rate, not a function of the rest of the kernel. R1 was 5.9% slower than R6 in this session, so R1 has some variation of its own that R6 does not.
 - **Why those adds are so slow here:** the benchmark's depth profile has only 40 bins (320 bytes, about three cache lines), so every one of about 6×10⁹ adds lands in the same three lines and is serialized, which matches the hot L2 slice in the counters. This is an explanation consistent with the counters, not something measured directly.
+- **A limit on how far it generalizes:** the cost comes from many adds landing on a few lines, and this benchmark's depth profile is coarse (40 bins of 0.01 cm, about one mean free path each). A finer profile would spread the adds over more lines and contend less; that was not measured.
 - **What it does not show:** that any real kernel can reach 0.82 s. The profiles are needed, and the cost of computing them without this serialization is what the next rung measures. The diagnostic is the target, not the result (it is 30 times the 12-thread CPU figure on a different machine, which is context and not a speedup).
 
 ## Development process
