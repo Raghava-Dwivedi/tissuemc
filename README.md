@@ -2,7 +2,7 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, took 10.06 s and 10.05 s, the same as R1's 10.06 s: registers removed R3's loss but did not make the kernel faster than R1, so what limits R1 is not yet identified. R6's counters then pointed at the depth-profile atomics, and a diagnostic that removes them ([`docs/diagnostics.md`](docs/diagnostics.md)) is built but has not been run. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, took 10.06 s and 10.05 s, the same as R1's 10.06 s: registers removed R3's loss but did not make the kernel faster than R1, so what limits R1 is not yet identified. R6's counters then pointed at the depth-profile atomics, and a diagnostic that removes them ([`docs/diagnostics.md`](docs/diagnostics.md)) confirmed it: the same kernel took 0.82 s instead of 10.05 s, so those atomics are 92% of R6's time. The fix has not been built or measured yet. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
@@ -269,7 +269,29 @@ The saved profiles of R3 and R6 (500,000 photons, every counter; [`results/gpu-r
 - **One part of L2 is far busier than the rest, and removing the local memory did not change it.** The busiest L2 slice runs at 63.78% of peak while the average over slices is 2.08% (31×), with its atomic unit busy 33.96% of the time; in R3 the busiest slice was at 63.64% even though R3 sent 8.8 billion extra sectors to L2. Something that did not change between the kernels sets that slice's load, and the atomics are what did not change.
 - **Taken together:** the run time looks set by many atomic adds to a few depth bins, serialized at one L2 slice. That would explain why R1, R5 and R6 take the same time whatever their local-memory use or instruction count, and why R3's extra local-memory traffic cost it a further 7%. The streaming multiprocessors are evenly loaded (the busiest was active 1.1% longer than the average), so this is not a tail effect.
 
-This is a reading of counters that agree with each other, not a test. The test is to remove the atomics and see whether the time drops; that is the next experiment.
+This is a reading of counters that agree with each other, not a test. The test, next, is to remove the atomics and see whether the time drops.
+
+### The test: removing the profile atomics
+
+The diagnostic ([`docs/diagnostics.md`](docs/diagnostics.md)) runs R6 with the depth and radius profile tallies removed, so the profiles come out as zeros and nothing else changes. Record: [`results/gpu-r6-noprofiles-summary.json`](results/gpu-r6-noprofiles-summary.json), the pasted summary of [`notebooks/colab_gpu_ablation.ipynb`](notebooks/colab_gpu_ablation.ipynb). **It is a diagnostic, not a result:** it was not validated, and its time says what the atomics cost, not what any shipped kernel achieves.
+
+- **The same work was done.** The event rate times the kernel time is the same 6.19 billion events with and without the profiles (6.19 for the diagnostic), and the comparison with the CPU on identical photons passes with R_d, T_t and event-count gaps identical to R6's to every printed digit (absorbed weight 0.0034 standard errors, worst per-batch 4.0e-05).
+- **Throughput**, same session, 4×10⁶ photons, median kernel time of 5 repeats:
+
+| Run | Median kernel time | Million events/s |
+|---|---|---|
+| R6 (first) | 10.053 s | 615.7 |
+| **R6 without the profile atomics (diagnostic)** | **0.823 s** | **7518.7** |
+| R1 | 10.644 s | 581.5 |
+| R6 (again) | 10.053 s | 615.6 |
+
+**The depth and radius profile atomics are 92% of R6's run time.** Without them the same kernel takes 0.823 s instead of 10.053 s, 12.2 times faster. R6's own time is remarkably steady: 10.052 s in the previous session and 10.053 s and 10.053 s here, with repeats spanning 0.04%; R1 in this session took 10.644 s (+5.9% against R6).
+
+**What this means** (my reading, now backed by an intervention and not only by counters):
+
+- **The floor that R1, R5 and R6 shared was the per-event atomic add into the depth profile.** It explains why R1, R5 and R6, which differ in local memory, instruction count and relaunch, took the same time in the previous session, and why R6's time did not move between sessions: it is a fixed hardware rate, not a function of the rest of the kernel. R1 was 5.9% slower than R6 in this session, so R1 has some variation of its own that R6 does not.
+- **Why those adds are so slow here:** the benchmark's depth profile has only 40 bins (320 bytes, about three cache lines), so every one of about 6×10⁹ adds lands in the same three lines and is serialized, which matches the hot L2 slice in the counters. This is an explanation consistent with the counters, not something measured directly.
+- **What it does not show:** that any real kernel can reach 0.82 s. The profiles are needed, and the cost of computing them without this serialization is what the next rung measures. The diagnostic is the target, not the result (it is 30 times the 12-thread CPU figure on a different machine, which is context and not a speedup).
 
 ## Development process
 

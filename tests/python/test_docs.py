@@ -517,3 +517,53 @@ def test_the_log_records_the_r6_counters_and_the_correction():
     assert "R6 counters: the wait moved to the atomic path" in log
     assert "Suggested, not tested" in log  # the reading is not presented as a finding
     assert "This corrects the R1 entry's reading" in log
+
+
+def test_ablation_readme_numbers_match_the_saved_summary():
+    data = json.loads((ROOT / "results" / "gpu-r6-noprofiles-summary.json").read_text())
+    assert data["diagnostic"] is True and data["prediction_recorded_before_run"] is False
+    s = data["summary"]
+    assert s["cross_engine_r6_noprofiles"]["agree"] is True
+    assert all(v <= lim for v, lim in s["cross_engine_r6_noprofiles"]["gaps"].values())
+    b = s["benchmark"]
+    # The diagnostic is labelled as such in the data, and only it.
+    assert (
+        b["r6_noprofiles"]["profiles"] is False and b["r6_noprofiles"]["validated_first"] is False
+    )
+    assert all(b[k]["profiles"] is True for k in ("r6_first", "r1", "r6_again"))
+    t = {k: v["median_kernel_s"] for k, v in b.items()}
+    ev = {k: v["million_events_per_s"] for k, v in b.items()}
+    readme = README.replace("**", "")
+    for label, key in (
+        ("R6 (first)", "r6_first"),
+        ("R6 without the profile atomics (diagnostic)", "r6_noprofiles"),
+        ("R1", "r1"),
+        ("R6 (again)", "r6_again"),
+    ):
+        assert f"| {label} | {t[key]:.3f} s | {ev[key]} |" in readme, label
+    # "The same work was done": events implied by rate times time agree to 0.1%.
+    implied = {k: ev[k] * t[k] for k in t}
+    assert max(implied.values()) / min(implied.values()) < 1.001
+    speed = t["r6_first"] / t["r6_noprofiles"]
+    share = 100 * (1 - t["r6_noprofiles"] / t["r6_first"])
+    assert f"{speed:.1f} times faster" in readme and f"are {share:.0f}% of R6's run time" in readme
+    # R6 steady across sessions: the previous session's value.
+    prev = json.loads((ROOT / "results" / "gpu-r5-r6-summary.json").read_text())["summary"]
+    assert abs(prev["benchmark"]["r6"]["median_kernel_s"] / t["r6_first"] - 1) < 0.001
+    # The README must say the diagnostic is not a result, and not present it as a speedup.
+    assert "It is a diagnostic, not a result" in readme
+    assert "the target, not the result" in readme
+
+
+def test_the_log_records_the_ablation_and_does_not_oversell_it():
+    log = (ROOT / "LOG.md").read_text().replace("**", "")
+    b = json.loads((ROOT / "results" / "gpu-r6-noprofiles-summary.json").read_text())["summary"][
+        "benchmark"
+    ]
+    assert f"R6 without the profile atomics {b['r6_noprofiles']['median_kernel_s']:.3f} s" in log
+    assert "Was the reading right? Yes, by intervention" in log
+    assert "Not shown: that a real kernel can reach" in log
+    assert (
+        "the diagnostic is the target, not the result" in log.lower()
+        or "target, not the result" in log
+    )

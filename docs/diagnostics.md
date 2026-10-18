@@ -11,3 +11,8 @@ A diagnostic changes what a kernel computes in order to measure what a part of i
 **How the result is read.** If the time drops substantially, the depth-profile atomics are the floor and the fix is to spread them out (shared-memory histograms per block, or copies of the profile). If the time does not move, that reading is wrong and the counters of the diagnostic say where the time is going.
 
 **How it is labelled.** The result JSON carries `"profiles": false`; the benchmark file is named `gpu-r6-noprofiles.json`, records `"validated_before_measuring": false`, and prints "DIAGNOSTIC" when it runs; the profiler and cross-engine tools accept the same flag. The CPU engine refuses it, and so does every GPU rung but 6.
+
+## Outcome (the first diagnostic)
+
+R6 took 10.053 s with the profiles and 0.823 s without (12.2× faster), for the same 6.19 billion events and with R_d, T_t, absorbed weight and counts agreeing with the CPU. The depth and radius profile atomics are 92% of R6's run time, which is the floor that R1, R5 and R6 shared. The diagnostic's time is the target for a real fix, not a result. See [`LOG.md`](../LOG.md).
+

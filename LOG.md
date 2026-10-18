@@ -127,5 +127,15 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 
 **How the result will be read:** if the time drops substantially, the atomics are the floor and the fix is to spread them out; if it does not move, the suggestion was wrong and the diagnostic's own counters say where the time is going.
 
-**Result:** not run on a GPU yet.
+**Result:**
+- The comparison with the CPU on identical photons (2×10⁶) passes; R_d, T_t and event-count gaps are identical to R6's to every printed digit, absorbed weight 0.0034 standard errors, worst per-batch 4.0e-05. Event rate times kernel time gives 6.19 billion events for R6 and 6.19 for the diagnostic: the same work.
+- Throughput, same session, 4×10⁶ photons, median kernel time of 5 repeats: R6 10.053 s (615.7 million events/s), **R6 without the profile atomics 0.823 s (7518.7)**, R1 10.644 s (581.5), R6 again 10.053 s (615.6). The diagnostic is 12.2 times faster than R6; R6 took 10.052 s in the previous session as well.
+- The diagnostic is not a result: it was not validated, and the profiles are zeros. The notebook's profiling cells were not part of what was pasted.
+
+**Was the reading right?** Yes, by intervention:
+- Measured: removing the depth and radius profile atomics takes the time from 10.053 s to 0.823 s. They are 91.8% of R6's run time.
+- This is the floor R1, R5 and R6 shared (R1 +5.9% against R6 in this session, equal to it in the last). R6's time is steady to 0.01% across sessions, as a fixed hardware rate would be.
+- Consistent with the counters, not separately measured: the benchmark's depth profile has 40 bins, 320 bytes, about three cache lines, so all of about 6×10⁹ adds serialize on the same lines.
+- Not shown: that a real kernel can reach 0.82 s. The diagnostic is the target, not the result.
+- Next: a rung that keeps the profiles but stops serializing their adds: per-block histograms in shared memory (the planned privatization rung, now applied to R6), judged against both R6 and this diagnostic.
 

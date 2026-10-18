@@ -1,0 +1,101 @@
+{
+ "provenance": "The final-cell summary of notebooks/colab_gpu_ablation.ipynb, run by the repository owner on a free Colab T4 at the commit named inside (the run date was not recorded), and pasted in unchanged. The profiling cells (every Nsight Compute counter for R6 and for the diagnostic, and their digest) are not part of this record: their output was not pasted. The 'r6_noprofiles' entry is the DIAGNOSTIC: the depth and radius profiles were not tallied (they are zeros), it was not validated as a result, and its time says what the atomics cost, not what any shipped kernel achieves.",
+ "rung": "6 and the 6 --no-profiles diagnostic",
+ "diagnostic": true,
+ "prediction_recorded_before_run": false,
+ "summary": {
+  "commit": "8152606c33afc9ccedae57940307e929e5b25583",
+  "device": "Tesla T4 (sm_75)",
+  "cross_engine_r6_noprofiles": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033671515250452014,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.952066868140746e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "benchmark": {
+   "r6_first": {
+    "median_kernel_s": 10.053,
+    "kernel_seconds": [
+     10.052,
+     10.053,
+     10.056,
+     10.053,
+     10.053
+    ],
+    "million_events_per_s": 615.7,
+    "validated_first": true,
+    "profiles": true
+   },
+   "r6_noprofiles": {
+    "median_kernel_s": 0.823,
+    "kernel_seconds": [
+     0.82,
+     0.823,
+     0.821,
+     0.823,
+     0.824
+    ],
+    "million_events_per_s": 7518.7,
+    "validated_first": false,
+    "profiles": false
+   },
+   "r1": {
+    "median_kernel_s": 10.644,
+    "kernel_seconds": [
+     10.602,
+     10.739,
+     10.731,
+     10.644,
+     10.596
+    ],
+    "million_events_per_s": 581.5,
+    "validated_first": true,
+    "profiles": true
+   },
+   "r6_again": {
+    "median_kernel_s": 10.053,
+    "kernel_seconds": [
+     10.054,
+     10.055,
+     10.053,
+     10.052,
+     10.051
+    ],
+    "million_events_per_s": 615.6,
+    "validated_first": true,
+    "profiles": true
+   }
+  }
+ }
+}
