@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from tissuemc_analysis import ncu_profile
 
@@ -55,3 +57,83 @@ def test_every_key_metric_names_a_requested_section_family():
     assert "Warp State Statistics" in names
     assert "GPU Speed Of Light Throughput" in names
     assert all(meaning for _, _, meaning in ncu_profile.KEY_METRICS)
+
+
+RAW_R1 = "\n".join(
+    [
+        "==PROF== Connected",
+        HEADER,
+        row(
+            0,
+            "",
+            "smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio",
+            "warp",
+            "1.20",
+        ),
+        row(0, "", "smsp__average_warps_issue_stalled_wait_per_issue_active.ratio", "warp", "0.40"),
+        row(0, "", "smsp__inst_executed.sum", "inst", "1,200,000,000"),
+        row(0, "", "l1tex__t_sectors_pipe_lsu_mem_local_op_ld.sum", "sector", "50,000"),
+        row(0, "", "launch__registers_per_thread", "register/thread", "48"),
+        row(1, "", "smsp__inst_executed.sum", "inst", "9"),  # a second kernel: must be ignored
+    ]
+)
+RAW_R3 = "\n".join(
+    [
+        HEADER,
+        row(
+            0,
+            "",
+            "smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio",
+            "warp",
+            "6.00",
+        ),
+        row(0, "", "smsp__average_warps_issue_stalled_wait_per_issue_active.ratio", "warp", "0.40"),
+        row(0, "", "smsp__inst_executed.sum", "inst", "260,000,000"),
+        row(0, "", "launch__registers_per_thread", "register/thread", "37"),
+        row(0, "", "launch__thread_count", "thread", "40,960"),  # only in B
+    ]
+)
+
+
+def test_raw_pages_parse_without_section_names():
+    metrics = ncu_profile.flatten(ncu_profile.parse_ncu_csv(RAW_R1))
+    assert metrics["smsp__inst_executed.sum"]["value"] == "1,200,000,000"  # first kernel only
+    assert metrics["launch__registers_per_thread"]["unit"] == "register/thread"
+
+
+def test_digest_puts_the_biggest_stall_first_and_gives_the_ratio():
+    a = ncu_profile.flatten(ncu_profile.parse_ncu_csv(RAW_R1))
+    b = ncu_profile.flatten(ncu_profile.parse_ncu_csv(RAW_R3))
+    text = "\n".join(ncu_profile.digest(a, b))
+    stalls = text.split("Instructions executed")[0]
+    assert stalls.index("long_scoreboard") < stalls.index("_wait_")  # larger first
+    long_row = next(ln for ln in text.splitlines() if "long_scoreboard" in ln)
+    assert long_row.split()[-1] == "5.00"  # 6.00 / 1.20
+    inst_row = next(ln for ln in text.splitlines() if "smsp__inst_executed.sum" in ln)
+    assert inst_row.split()[-1] == "0.22"  # 260e6 / 1200e6, thousands separators handled
+    local_row = next(ln for ln in text.splitlines() if "mem_local_op_ld" in ln)
+    assert local_row.split()[-2:] == ["-", "-"]  # present in A only: no ratio, "-" for B
+    assert any("launch__thread_count" in ln for ln in text.splitlines())  # present in B only
+
+
+def test_digest_falls_back_to_any_counter_that_mentions_stall():
+    a = {"smsp__warp_stall_something.pct": {"value": "10", "unit": "%"}}
+    b = {"smsp__warp_stall_something.pct": {"value": "30", "unit": "%"}}
+    lines = ncu_profile.digest(a, b)
+    assert any("warp_stall_something" in ln and ln.split()[-1] == "3.00" for ln in lines)
+
+
+def test_digest_says_so_when_nothing_matches():
+    assert any("no matching counters" in ln for ln in ncu_profile.digest({}, {}))
+
+
+def test_digest_command_reads_two_saved_files(tmp_path, capsys):
+    paths = []
+    for name, text in (("a.json", RAW_R1), ("b.json", RAW_R3)):
+        p = tmp_path / name
+        metrics = ncu_profile.flatten(ncu_profile.parse_ncu_csv(text))
+        p.write_text(json.dumps({"rung": 1, "photons": 1, "full": True, "metrics": metrics}))
+        paths.append(str(p))
+    assert ncu_profile.main(["--digest", *paths]) == 0
+    out = capsys.readouterr().out
+    assert "A = a.json" in out and "long_scoreboard" in out

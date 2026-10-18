@@ -5,6 +5,13 @@
 Runs ``ncu`` on one rung with a modest photon count (profiling replays the kernel many times) and
 keeps the numbers that say what limits it: how many threads of a warp are active per instruction
 (divergence), how busy the compute and memory systems are, and occupancy.
+
+    uv run tissuemc-profile --rung 3 --full --photons 1000000 --output results/gpu-r3-full.json
+    uv run tissuemc-profile --digest results/gpu-r1-full.json results/gpu-r3-full.json
+
+``--full`` collects every counter (about forty replays of the kernel) and ``--digest`` prints two
+such files side by side for the questions the key counters cannot answer: why warps wait, how many
+instructions each rung executes, and how much local-memory traffic there is.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -101,21 +109,87 @@ def find_ncu() -> str:
     return path
 
 
-def profile(binary: Path, config: Path, rung: int, photons: int, batches: int) -> dict:
+def flatten(sections: dict[str, dict[str, dict[str, str]]]) -> dict[str, dict[str, str]]:
+    """Metric name -> {value, unit}, dropping the section level (raw pages have no sections)."""
+    return {name: v for section in sections.values() for name, v in section.items()}
+
+
+def _number(text: str) -> float | None:
+    try:
+        return float(text.replace(",", ""))
+    except ValueError:
+        return None
+
+
+# (heading, regular expression on the metric name, most rows to show). The stall-reason names are
+# matched loosely because Nsight Compute has two families of them; every row found is printed.
+DIGEST_GROUPS = [
+    ("Warp stall reasons", r"issue_stalled_.*\.ratio$", 14),
+    (
+        "Instructions executed",
+        r"^smsp__(thread_)?inst_executed(_op_(local|global|shared)_(ld|st))?\.sum$"
+        r"|^smsp__thread_inst_executed_per_inst_executed\.ratio$",
+        12,
+    ),
+    (
+        "Local memory and L1",
+        r"^l1tex__.*local.*\.(sum|pct)$|^l1tex__t_sector_hit_rate\.pct$|spill",
+        14,
+    ),
+    (
+        "Launch and occupancy",
+        r"^launch__(registers_per_thread|thread_count|grid_size|block_size|occupancy_limit_.*)$"
+        r"|^sm__warps_active\.avg\.pct_of_peak_sustained_active$",
+        12,
+    ),
+]
+FALLBACK_STALL = r"stall"
+
+
+def digest(a: dict[str, dict[str, str]], b: dict[str, dict[str, str]]) -> list[str]:
+    """Side-by-side lines for the counters that explain why one kernel waits longer than another."""
+    lines: list[str] = []
+    for title, pattern, limit in DIGEST_GROUPS:
+        names = sorted(set(a) | set(b))
+        hits = [m for m in names if re.search(pattern, m)]
+        if not hits and title == "Warp stall reasons":
+            hits = [m for m in names if re.search(FALLBACK_STALL, m)]
+
+        def size(m: str) -> float:
+            return max(abs(_number(x[m]["value"]) or 0.0) for x in (a, b) if m in x)
+
+        lines.append(f"\n{title}  (A, B, B/A)")
+        if not hits:
+            lines.append("  (no matching counters)")
+        for m in sorted(hits, key=size, reverse=True)[:limit]:
+            va = a.get(m, {}).get("value", "-")
+            vb = b.get(m, {}).get("value", "-")
+            na, nb = _number(va), _number(vb)
+            ratio = f"{nb / na:.2f}" if na and nb is not None else "-"
+            lines.append(f"  {m:<78} {va:>16} {vb:>16} {ratio:>8}")
+    return lines
+
+
+def profile(
+    binary: Path, config: Path, rung: int, photons: int, batches: int, full: bool = False
+) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "ncu.csv"
         cmd = [
             find_ncu(),
             "--csv",
             "--page",
-            "details",
+            "raw" if full else "details",
             "--log-file",
             str(log),
             "--launch-count",
             "1",
         ]
-        for section in SECTIONS:
-            cmd += ["--section", section]
+        if full:
+            cmd += ["--set", "full"]
+        else:
+            for section in SECTIONS:
+                cmd += ["--section", section]
         cmd += [
             str(binary),
             "run",
@@ -144,11 +218,40 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--photons", type=int, default=200_000)
     ap.add_argument("--batches", type=int, default=50)
     ap.add_argument("--output", type=Path, help="write all counters to this JSON file")
+    ap.add_argument(
+        "--full", action="store_true", help="collect every counter (slow); use with --output"
+    )
+    ap.add_argument(
+        "--digest",
+        nargs=2,
+        type=Path,
+        metavar=("A.json", "B.json"),
+        help="print two --full files side by side and exit",
+    )
     args = ap.parse_args(argv)
+
+    if args.digest:
+        a, b = (json.loads(p.read_text())["metrics"] for p in args.digest)
+        print(f"A = {args.digest[0].name}    B = {args.digest[1].name}")
+        print("\n".join(digest(a, b)))
+        return 0
 
     root = validate.find_root()
     binary = args.binary or root / "build" / "tissuemc"
     config = args.config or root / "configs" / "bench" / "tissue_g09.mci"
+    if args.full:
+        metrics = flatten(profile(binary, config, args.rung, args.photons, args.batches, full=True))
+        print(f"rung {args.rung}, {args.photons} photons: {len(metrics)} counters collected")
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(
+                    {"rung": args.rung, "photons": args.photons, "full": True, "metrics": metrics},
+                    indent=1,
+                )
+                + "\n"
+            )
+        return 0
     sections = profile(binary, config, args.rung, args.photons, args.batches)
 
     print(f"rung {args.rung}, {args.photons} photons ({config.name}); key counters:")
