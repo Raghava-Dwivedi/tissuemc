@@ -70,6 +70,7 @@ def run_engine(
     engine: str = "cpu",
     gpu_tally: str = "float64",
     rung: int = 0,
+    profiles: bool = True,
 ) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.json"
@@ -80,6 +81,8 @@ def run_engine(
         ]  # fmt: skip
         if engine != "cpu":
             cmd += ["--engine", engine, "--gpu-tally", gpu_tally, "--rung", str(rung)]
+            if not profiles:
+                cmd += ["--no-profiles"]  # a GPU diagnostic: the depth/radius profiles are zeros
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0:
             raise SystemExit(f"engine failed ({proc.returncode}): {proc.stderr.strip()}")

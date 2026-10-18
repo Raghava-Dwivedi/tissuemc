@@ -246,6 +246,9 @@ void write_json(const RunResult &run, std::ostream &out) {
     j.key("rung");
     j.integer(static_cast<uint64_t>(run.rung));
     j.raw(",");
+    j.key("profiles");
+    j.raw(run.profiles ? "true" : "false");
+    j.raw(",");
     j.key("events");
     j.integer(run.events());
     j.raw(",");

@@ -285,3 +285,12 @@ def test_the_full_command_writes_json_and_reuses_the_csv(tmp_path, monkeypatch, 
     saved = json.loads(out.read_text())
     assert saved["full"] is True and saved["metrics"][INST]["unit"] == "inst"
     assert "counters collected" in capsys.readouterr().out
+
+
+def test_the_profiler_passes_the_diagnostic_flag_through(monkeypatch):
+    calls = []
+    _fake_ncu(monkeypatch, RAW_R1, calls)
+    ncu_profile.profile(Path("b"), Path("c"), 6, 1000, 10, full=True)
+    ncu_profile.profile(Path("b"), Path("c"), 6, 1000, 10, full=True, profiles=False)
+    assert "--no-profiles" not in calls[0]
+    assert calls[1][-3:] == ["--rung", "6", "--no-profiles"]

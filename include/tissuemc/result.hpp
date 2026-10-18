@@ -42,6 +42,7 @@ struct RunResult {
     std::string device;                      // GPU model, empty for the CPU engine
     std::string tally_precision = "float64"; // precision of the running totals
     int rung = 0;                            // GPU optimization rung (0 for the CPU engine)
+    bool profiles = true; // false: the depth and radius profiles were not tallied (GPU diagnostic)
 
     uint64_t photons() const;
     uint64_t events() const;

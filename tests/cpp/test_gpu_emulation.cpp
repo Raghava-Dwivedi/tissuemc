@@ -53,7 +53,7 @@ TEST_CASE("the CPU engine uses the shared batch plan") {
 namespace {
 
 struct Emulated {
-    std::vector<double> rd, tt, absorbed, az;
+    std::vector<double> rd, tt, absorbed, az, rr;
     std::vector<unsigned long long> events, anomalies;
 };
 
@@ -76,6 +76,7 @@ Emulated emulate_with(const RunSpec &spec, uint64_t photons, uint64_t batches, R
     out.tt.assign(tt.begin(), tt.end());
     out.absorbed.assign(absorbed.begin(), absorbed.end());
     out.az.assign(az.begin(), az.end());
+    out.rr.assign(rr.begin(), rr.end());
     return out;
 }
 
@@ -464,4 +465,74 @@ TEST_CASE("rung 6 gives the same per-batch results whatever the lanes' interleav
             }
         }
     }
+}
+
+TEST_CASE("the profile switch skips only the depth and radius tallies") {
+    // The diagnostic behind --no-profiles: with Profiles = false a tally must still score R_d, T_t,
+    // absorbed weight and the counters, and leave the depth and radius arrays untouched.
+    const RunSpec spec = v3();
+    const Geometry<float> geo = make_geometry<float>(spec);
+    const size_t layers = static_cast<size_t>(geo.num_layers);
+    auto run = [&](auto tally_tag, bool expect_profiles) {
+        using Tally = decltype(tally_tag);
+        std::vector<double> rd(1), tt(1), absorbed(layers), az(static_cast<size_t>(geo.nz)),
+            rr(static_cast<size_t>(geo.nr));
+        std::vector<unsigned long long> events(1), anomalies(1);
+        GpuTallyArrays<double> arrays{rd.data(), tt.data(),     absorbed.data(), az.data(),
+                                      rr.data(), events.data(), anomalies.data()};
+        Tally tally(arrays, 0, geo.num_layers);
+        Photon<float> p{};
+        p.uz = 1.0f;
+        p.z = 0.05f;
+        p.layer = 0;
+        tally.score_absorption(p, geo, 0.25f);
+        p.x = 0.03f;
+        tally.score_reflectance(p, geo, 0.125f);
+        tally.score_transmittance(p, geo, 0.0625f);
+        tally.flush_counters();
+        CHECK(absorbed[0] == 0.25);
+        CHECK(rd[0] == 0.125);
+        CHECK(tt[0] == 0.0625);
+        CHECK(events[0] == 1);
+        double az_sum = 0, rr_sum = 0;
+        for (double v : az) {
+            az_sum += v;
+        }
+        for (double v : rr) {
+            rr_sum += v;
+        }
+        CHECK(az_sum == (expect_profiles ? 0.25 : 0.0));
+        CHECK(rr_sum == (expect_profiles ? 0.125 : 0.0));
+    };
+    run(GpuTallyR5<double, true>(GpuTallyArrays<double>{}, 0, 1), true);
+    run(GpuTallyR5<double, false>(GpuTallyArrays<double>{}, 0, 1), false);
+}
+
+TEST_CASE("rung 6 without profiles scores everything else exactly as rung 6 does") {
+    // One lane, so the order of every addition is the same: the totals must be identical, not
+    // close, and only the two profile arrays differ (zeros against real profiles).
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated with =
+        emulate_persistent<double, PersistentLaneRegs>(spec, photons, batches, 11, 1, false);
+    const Emulated without = emulate_persistent<double, PersistentLaneRegsNoProfiles>(
+        spec, photons, batches, 11, 1, false);
+    CHECK(without.events == with.events);
+    CHECK(without.anomalies == with.anomalies);
+    CHECK(without.rd == with.rd);
+    CHECK(without.tt == with.tt);
+    CHECK(without.absorbed == with.absorbed);
+    double az_with = 0, az_without = 0, rr_with = 0, rr_without = 0;
+    for (double v : with.az)
+        az_with += v;
+    for (double v : without.az)
+        az_without += v;
+    for (double v : with.rr)
+        rr_with += v;
+    for (double v : without.rr)
+        rr_without += v;
+    CHECK(az_with > 0);
+    CHECK(rr_with > 0);
+    CHECK(az_without == 0);
+    CHECK(rr_without == 0);
 }

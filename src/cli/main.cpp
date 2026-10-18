@@ -27,6 +27,9 @@ void usage(std::FILE *to) {
             "  --seed S       64-bit random seed (default 1)\n"
             "  --threads T    CPU threads, 0 = one per hardware thread (default 1)\n"
             "  --precision P  float64 (default) or float32 transport; tallies are always double\n"
+            "  --engine E     cpu (default) or cuda\n"
+            "  --rung N       GPU rung: 0, 1, 3, 5 or 6\n"
+            "  --no-profiles  GPU diagnostic for rung 6: skip the depth and radius profiles\n"
             "  --output FILE  write full results as JSON\n");
 }
 
@@ -89,6 +92,8 @@ int run_command(int argc, char **argv) {
                              e.c_str());
                 return 2;
             }
+        } else if (a == "--no-profiles") {
+            opt.profiles = false;
         } else if (a == "--rung") {
             opt.rung = static_cast<int>(parse_count("--rung", value("--rung")));
         } else if (a == "--gpu-tally") {
@@ -111,6 +116,10 @@ int run_command(int argc, char **argv) {
         }
     }
 
+    if (!opt.profiles && !use_cuda) {
+        std::fprintf(stderr, "tissuemc: --no-profiles is a GPU diagnostic; use --engine cuda\n");
+        return 2;
+    }
 #ifndef TISSUEMC_WITH_CUDA
     if (use_cuda) {
         std::fprintf(stderr, "tissuemc: this build has no CUDA support; configure with "

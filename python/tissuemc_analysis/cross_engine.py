@@ -92,6 +92,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--b-engine", default="cuda", choices=["cpu", "cuda"])
     ap.add_argument("--b-precision", default="float32", choices=["float64", "float32"])
     ap.add_argument("--b-rung", type=int, default=0, help="GPU rung for engine B")
+    ap.add_argument(
+        "--b-no-profiles",
+        action="store_true",
+        help="run engine B as the profiles-off diagnostic (rung 6); totals must still agree",
+    )
     ap.add_argument("--report", type=Path, help="write the gaps to this JSON file")
     args = ap.parse_args(argv)
 
@@ -101,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     if not config.exists():
         raise SystemExit(f"no such validation input: {config}")
 
-    def run(engine: str, precision: str, rung: int = 0) -> dict:
+    def run(engine: str, precision: str, rung: int = 0, profiles: bool = True) -> dict:
         return validate.run_engine(
             binary,
             config,
@@ -111,10 +116,15 @@ def main(argv: list[str] | None = None) -> int:
             precision,
             engine=engine,
             rung=rung,
+            profiles=profiles,
         )
 
     a = run(args.a_engine, args.a_precision)
-    b = run(args.b_engine, args.b_precision, args.b_rung)
+    b = run(args.b_engine, args.b_precision, args.b_rung, not args.b_no_profiles)
+    if args.b_no_profiles and (
+        b.get("profiles", True) or any(b.get("a_z", [])) or any(b.get("rd_r", []))
+    ):
+        raise SystemExit("the diagnostic run still tallied the depth or radius profile")
     print(f"{args.case}: {args.photons} photons, {args.batches} batches, seed {args.seed}")
     print(f"  A = {args.a_engine} {args.a_precision}    B = {args.b_engine} {args.b_precision}")
     if b.get("device"):
@@ -139,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
                         "precision": args.b_precision,
                         "device": b.get("device", ""),
                         "rung": args.b_rung,
+                        "profiles": not args.b_no_profiles,
                     },
                     "gaps": [
                         {"name": g.name, "value": g.value, "limit": g.limit, "passed": g.passed}

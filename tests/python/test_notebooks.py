@@ -79,3 +79,34 @@ def test_the_r5_notebook_gates_every_long_step_on_the_quick_check():
         ln.split("--rung ")[1].split()[0] for ln in ladder.splitlines() if "tissuemc-bench" in ln
     ]
     assert order == ["1", "3", "5", "6", "1"]  # R1 before and after, to show session drift
+
+
+def test_the_ablation_notebook_gates_its_long_steps_and_labels_the_diagnostic():
+    nb = json.loads((ROOT / "notebooks" / "colab_gpu_ablation.ipynb").read_text())
+    sources = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    check = next(s for s in sources if "--photons 200000" in s)
+    assert ".quick_ok" in check and "&&" in check and "--b-no-profiles" in check
+    gated = [
+        s
+        for s in sources
+        if any(k in s for k in ("tissuemc-bench", "tissuemc-profile --rung", "--photons 2000000"))
+    ]
+    assert len(gated) == 3  # the full comparison, the benchmarks, the profiles
+    for s in gated:
+        commands = [ln for ln in s.splitlines() if ln.startswith("!")]
+        assert commands and all(
+            "[ -f results/.quick_ok ]" in ln and "SKIPPED" in ln for ln in commands
+        )
+    benches = [
+        ln
+        for ln in next(s for s in sources if "tissuemc-bench" in s).splitlines()
+        if "tissuemc-bench" in ln
+    ]
+    rungs = [ln.split("--rung ")[1].split()[0] for ln in benches]
+    assert rungs == ["6", "6", "1", "6"]  # R6 before and after, to show session drift
+    flagged = ["--no-profiles" in ln for ln in benches]
+    assert flagged == [False, True, False, False]  # only the second is the diagnostic
+    profiles = next(s for s in sources if "--full" in s)
+    assert profiles.count("--reuse-csv") == 2 and profiles.count("--no-profiles") == 1
+    intro = "".join(nb["cells"][0]["source"])
+    assert "not a result" in intro

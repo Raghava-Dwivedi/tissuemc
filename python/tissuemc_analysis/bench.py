@@ -197,6 +197,7 @@ def run_gpu_benchmark(
     seed: int,
     gpu_tally: str = "float64",
     rung: int = 0,
+    profiles: bool = True,
 ) -> dict:
     """Time the GPU engine. Transport is deterministic, so every repeat must agree.
 
@@ -216,7 +217,11 @@ def run_gpu_benchmark(
         ]
         cmd += ["--seed", str(seed), "--engine", "cuda", "--gpu-tally", gpu_tally]
         cmd += ["--rung", str(rung)]
+        if not profiles:
+            cmd += ["--no-profiles"]
         run = _run_engine_json(cmd)
+        if run.get("profiles", True) != profiles:
+            raise SystemExit("benchmark aborted: the engine did not report the requested profiles")
         runs.append(run)
         if i >= warmup:
             kernel.append(run["kernel_seconds"])
@@ -237,6 +242,7 @@ def run_gpu_benchmark(
     events = first["events"]
     return {
         "rung": rung,
+        "profiles": profiles,
         "device": first.get("device", ""),
         "tally_precision": first.get("tally_precision", gpu_tally),
         "events": events,
@@ -291,7 +297,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--gpu-tally", choices=["float64", "float32"], default="float64", help="GPU running totals"
     )
+    ap.add_argument(
+        "--no-profiles",
+        action="store_true",
+        help="DIAGNOSTIC, cuda rung 6 only: skip the depth and radius profiles; not a result",
+    )
     args = ap.parse_args(argv)
+    if args.no_profiles and args.engine != "cuda":
+        ap.error("--no-profiles is a GPU diagnostic; use --engine cuda")
     if args.engine == "cuda":
         return main_gpu(args)
 
@@ -356,10 +369,13 @@ def main_gpu(args: argparse.Namespace) -> int:
     binary = args.binary or validate.ensure_built(root)
     config = args.config or root / "configs" / "bench" / "tissue_g09.mci"
     output = args.output
+    suffix = "-noprofiles" if args.no_profiles else ""
     if output == Path("results/cpu-scaling.json"):
-        output = Path(f"results/gpu-r{args.rung}.json")
+        output = Path(f"results/gpu-r{args.rung}{suffix}.json")
     validated = False
-    if not args.skip_validation:
+    if args.no_profiles:
+        print("DIAGNOSTIC: the depth and radius profiles are off; this is not a validated result.")
+    elif not args.skip_validation:
         print("Validating the GPU engine before measuring anything ...")
         v_args = ["--binary", str(binary), "--photons", "1000000", "--engine", "cuda"]
         v_args += ["--gpu-tally", args.gpu_tally, "--rung", str(args.rung)]
@@ -379,9 +395,10 @@ def main_gpu(args: argparse.Namespace) -> int:
         args.seed,
         args.gpu_tally,
         args.rung,
+        profiles=not args.no_profiles,
     )
     data = {
-        "benchmark": f"gpu-r{args.rung}",
+        "benchmark": f"gpu-r{args.rung}{suffix}",
         "workload": config.name,
         "photons": photons,
         "batches": args.batches,

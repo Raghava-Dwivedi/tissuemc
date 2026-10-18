@@ -117,3 +117,15 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - This corrects the R1 entry's reading that atomics were not the main limit: that rested on average L2 busy percentages, which a hot slice does not show. It also means the earlier decision to defer R2 (shared-memory histograms) was made on the wrong evidence.
 - Next: remove the depth and radius profile atomics from R6 as a diagnostic (the profiles come out as zeros, everything else unchanged) and time it. If the time drops, the atomics are the floor, and R2 or a spread-out copy of the profile is the fix; if not, the reading above is wrong.
 
+## Diagnostic: R6 without the depth and radius profile atomics
+
+*Design:* [`docs/diagnostics.md`](docs/diagnostics.md) · *Notebook:* [`notebooks/colab_gpu_ablation.ipynb`](notebooks/colab_gpu_ablation.ipynb)
+
+**Prediction:** none (measurement-only). This is a diagnostic, not a rung: its numbers are not a result.
+
+**Why:** the R6 counters entry suggested that the per-event depth-profile atomic sets the run time of R1, R5 and R6. This removes that atomic (and the radius profile's) from R6 and times it, which tests the suggestion instead of assuming it.
+
+**How the result will be read:** if the time drops substantially, the atomics are the floor and the fix is to spread them out; if it does not move, the suggestion was wrong and the diagnostic's own counters say where the time is going.
+
+**Result:** not run on a GPU yet.
+

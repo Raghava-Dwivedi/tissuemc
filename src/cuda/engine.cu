@@ -76,6 +76,18 @@ __global__ void persistent_regs_kernel(Geometry<float> geo, BatchPlan plan, uint
     }
 }
 
+// The diagnostic: rung 6 without the depth and radius profile tallies. A kernel of its own, so
+// persistent_regs_kernel stays what the recorded rung 6 results measured.
+template <class T>
+__global__ void persistent_regs_noprofiles_kernel(Geometry<float> geo, BatchPlan plan,
+                                                  uint64_t seed, uint64_t first, uint64_t end,
+                                                  GpuTallyArrays<T> arrays,
+                                                  unsigned long long *next) {
+    PersistentLaneRegsNoProfiles<T> lane(arrays, geo.num_layers);
+    while (lane.advance(geo, seed, plan, first, end, next)) {
+    }
+}
+
 template <class T> class DeviceArray {
   public:
     explicit DeviceArray(size_t count) : count_(count) {
@@ -131,9 +143,12 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
         if (opt.rung == 3) {
             CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, persistent_kernel<T>,
                                                                      kBlockSize, 0));
-        } else {
+        } else if (opt.profiles) {
             CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &per_sm, persistent_regs_kernel<T>, kBlockSize, 0));
+        } else {
+            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &per_sm, persistent_regs_noprofiles_kernel<T>, kBlockSize, 0));
         }
         const uint64_t resident = static_cast<uint64_t>(std::max(per_sm, 1)) *
                                   static_cast<uint64_t>(prop.multiProcessorCount);
@@ -142,8 +157,11 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
         if (opt.rung == 3) {
             persistent_kernel<T>
                 <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
-        } else {
+        } else if (opt.profiles) {
             persistent_regs_kernel<T>
+                <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
+        } else {
+            persistent_regs_noprofiles_kernel<T>
                 <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
         }
         CUDA_CHECK(cudaGetLastError());
@@ -177,6 +195,7 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     result.spec = run;
     result.engine = "cuda";
     result.rung = opt.rung;
+    result.profiles = opt.profiles;
     result.precision = "float32";
     result.tally_precision = sizeof(T) == sizeof(double) ? "float64" : "float32";
     result.seed = opt.seed;
@@ -225,6 +244,9 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     }
     if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3 && opt.rung != 5 && opt.rung != 6) {
         throw ConfigError("rung must be 0, 1, 3, 5 or 6 (rungs 2 and 4 are not built yet)");
+    }
+    if (!opt.profiles && opt.rung != 6) {
+        throw ConfigError("--no-profiles is a diagnostic for rung 6 only");
     }
     if (!cuda_available()) {
         throw std::runtime_error("no usable CUDA device found");

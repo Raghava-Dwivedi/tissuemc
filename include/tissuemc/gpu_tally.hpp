@@ -195,9 +195,12 @@ TMC_HD inline void run_photon_r1(const Geometry<float> &geo, uint64_t seed, uint
 // is still one, and the depth and radius profiles are unchanged. The random generator is
 // RegPhotonRng, for the same reason.
 //
+// With Profiles = false the depth and radius profiles are not tallied at all: a diagnostic, used to
+// measure what their atomic adds cost (rung 6 only; the profiles then come out as zeros).
+//
 // A layer's total is now published in several partial sums rather than one. Each is a float sum of
 // at most a photon's weight, so the rounding is no worse than R1's (validation checks it).
-template <class T> struct GpuTallyR5 {
+template <class T, bool Profiles = true> struct GpuTallyR5 {
     GpuTallyArrays<T> out;
     int batch;
     int layers;
@@ -218,14 +221,18 @@ template <class T> struct GpuTallyR5 {
             run_layer = p.layer;
         }
         run_sum += w;
-        TMC_ATOMIC_ADD(&out.az[bin(p.z, geo.dz, geo.nz)], static_cast<T>(w));
+        if constexpr (Profiles) {
+            TMC_ATOMIC_ADD(&out.az[bin(p.z, geo.dz, geo.nz)], static_cast<T>(w));
+        }
     }
 
     TMC_HD void score_reflectance(const Photon<float> &p, const Geometry<float> &geo, float w) {
         check(p, w);
         TMC_ATOMIC_ADD(&out.rd[batch], static_cast<T>(w));
-        const float r = m::sqrt(p.x * p.x + p.y * p.y);
-        TMC_ATOMIC_ADD(&out.rr[bin(r, geo.dr, geo.nr)], static_cast<T>(w));
+        if constexpr (Profiles) {
+            const float r = m::sqrt(p.x * p.x + p.y * p.y);
+            TMC_ATOMIC_ADD(&out.rr[bin(r, geo.dr, geo.nr)], static_cast<T>(w));
+        }
     }
 
     TMC_HD void score_transmittance(const Photon<float> &p, const Geometry<float> &, float w) {
@@ -343,6 +350,10 @@ template <class T, class Tally, class Rng> class PersistentLaneOf {
 // register-resident ones.
 template <class T> using PersistentLane = PersistentLaneOf<T, GpuTallyR1<T>, PhotonRng>;
 template <class T> using PersistentLaneRegs = PersistentLaneOf<T, GpuTallyR5<T>, RegPhotonRng>;
+// The diagnostic: rung 6 without the depth and radius profile tallies (see
+// EngineOptions::profiles).
+template <class T>
+using PersistentLaneRegsNoProfiles = PersistentLaneOf<T, GpuTallyR5<T, false>, RegPhotonRng>;
 
 // Dispatch on the rung number, shared by the kernel and the host emulation for rungs 0 and 1. The
 // other rungs do not go through here: rungs 3 and 6 are not one photon per call (see

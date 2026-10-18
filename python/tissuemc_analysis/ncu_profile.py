@@ -257,6 +257,7 @@ def profile(
     full: bool = False,
     keep_csv: Path | None = None,
     reuse_csv: bool = False,
+    profiles: bool = True,
 ) -> dict:
     if reuse_csv and keep_csv is not None and keep_csv.exists():
         return parse_ncu_csv(keep_csv.read_text())  # collected earlier: do not repeat the minutes
@@ -287,6 +288,8 @@ def profile(
             str(batches),
         ]
         cmd += ["--engine", "cuda", "--rung", str(rung)]
+        if not profiles:
+            cmd += ["--no-profiles"]  # the GPU diagnostic: no depth or radius profiles
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0 or not log.exists():
             raise SystemExit(
@@ -311,6 +314,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output", type=Path, help="write all counters to this JSON file")
     ap.add_argument(
         "--full", action="store_true", help="collect every counter (slow); use with --output"
+    )
+    ap.add_argument(
+        "--no-profiles",
+        action="store_true",
+        help="DIAGNOSTIC, rung 6 only: profile the kernel without the depth and radius profiles",
     )
     ap.add_argument(
         "--reuse-csv",
@@ -346,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             full=True,
             keep_csv=keep,
             reuse_csv=args.reuse_csv,
+            profiles=not args.no_profiles,
         )
         metrics = flatten(sections)
         print(f"rung {args.rung}, {args.photons} photons: {len(metrics)} counters collected")
@@ -359,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
                 + "\n"
             )
         return 0
-    sections = profile(binary, config, args.rung, args.photons, args.batches)
+    sections = profile(
+        binary, config, args.rung, args.photons, args.batches, profiles=not args.no_profiles
+    )
 
     print(f"rung {args.rung}, {args.photons} photons ({config.name}); key counters:")
     shown = {}

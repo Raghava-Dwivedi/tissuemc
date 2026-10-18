@@ -24,6 +24,9 @@ struct EngineOptions {
     TallyPrecision gpu_tally = TallyPrecision::Float64; // used by the GPU engine only
     int rung =
         0; // GPU rung: 0 naive, 1 fewer atomics, 3 relaunch, 5 registers, 6 relaunch + registers
+    // GPU diagnostic, rung 6 only: false skips the depth and radius profile tallies (they come out
+    // as zeros) to measure what their atomic adds cost. Everything else is unchanged. Not a result.
+    bool profiles = true;
 };
 
 // Photon i always uses the random stream keyed by (seed, i), so the result depends only on
