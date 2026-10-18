@@ -107,10 +107,12 @@ def test_gpu_r0_readme_numbers_match_the_committed_summary():
     assert summary["benchmark"]["validated_first"] is True
 
 
-def test_the_log_does_not_claim_a_prediction_that_was_not_made():
+def test_the_log_is_measurement_only_and_admits_the_runs_without_predictions():
     log = (ROOT / "LOG.md").read_text()
-    assert "none was recorded" in log
+    assert "measurement-only" in log
+    assert "none was recorded" in log  # the R0 and R1 entries keep their original wording
     assert "pending" not in log.lower()
+    assert "not yet recorded" not in log  # no stale placeholder asking for a forecast
 
 
 def test_gpu_r1_readme_numbers_match_the_committed_summary():
@@ -150,11 +152,28 @@ def test_gpu_r1_log_matches_the_committed_summary():
         assert text in log, text
 
 
-def test_readme_does_not_claim_predictions_the_log_says_were_not_made():
-    log = (ROOT / "LOG.md").read_text()
-    if log.count("none was recorded") > 0:
-        assert "writes each prediction before it is tested" not in README
-        assert "none was recorded" in README or "for R0 and R1 none was recorded" in README
+def test_public_docs_do_not_promise_predictions_that_were_not_made():
+    assert "measurement-only" in README
+    for name in (
+        "README.md",
+        "docs/DESIGN.md",
+        "docs/rungs/R0.md",
+        "docs/rungs/R1.md",
+        "docs/rungs/R3.md",
+    ):
+        text = (ROOT / name).read_text()
+        for phrase in (
+            "writes each prediction",
+            "meant to hold the author's prediction",
+            "A prediction is recorded",
+            "Write the prediction",
+            "whether his prediction held",
+        ):
+            assert phrase not in text, (name, phrase)
+    for name in ("colab_gpu.ipynb", "colab_gpu_r1.ipynb", "colab_gpu_r3.ipynb"):
+        nb = json.loads((ROOT / "notebooks" / name).read_text())
+        intro = "".join(nb["cells"][0]["source"]).lower()
+        assert "prediction" not in intro, name
 
 
 def test_saved_r1_notebook_outputs_match_the_committed_summary():
@@ -176,3 +195,62 @@ def test_saved_r1_notebook_outputs_match_the_committed_summary():
     for name, v0 in s["counters"]["r0"].items():
         line = next(x for x in printed.splitlines() if x.strip().startswith(name))
         assert v0.replace(" cycle", "") in line, (name, line)
+
+
+def test_gpu_r3_readme_numbers_match_the_committed_summary():
+    data = json.loads((ROOT / "results" / "gpu-r3-summary.json").read_text())
+    assert data["prediction_recorded_before_run"] is False
+    assert data["rung"] == 3
+    s = data["summary"]
+    assert s["validation_r3"]["failed"] == []
+    for key in ("cross_engine_r1", "cross_engine_r3"):
+        assert s[key]["agree"] is True
+        assert all(value <= limit for value, limit in s[key]["gaps"].values()), key
+    assert "absorbed: total gap / standard error" in s["cross_engine_r1"]["gaps"]
+    b = s["benchmark"]
+    for run in b.values():
+        assert run["validated_first"] is True
+    readme = README.replace("**", "")
+    for label, key in (("R1 (first)", "r1_first"), ("R3", "r3"), ("R1 (again)", "r1_again")):
+        row = f"| {label} | {b[key]['median_kernel_s']:.3f} s | {b[key]['million_events_per_s']} |"
+        assert row in readme, row
+    r1_mean = (b["r1_first"]["median_kernel_s"] + b["r1_again"]["median_kernel_s"]) / 2
+    slower = 100 * (b["r3"]["median_kernel_s"] / r1_mean - 1)
+    assert slower > 0  # the README says R3 was slower; if the data change, the text must too
+    assert f"it was about {slower:.1f}% slower" in readme
+    r1_repeats = b["r1_first"]["kernel_seconds"] + b["r1_again"]["kernel_seconds"]
+    assert max(r1_repeats) < min(b["r3"]["kernel_seconds"])  # "all ten R1 repeats beat all five R3"
+    c1, c3 = s["counters"]["r1"], s["counters"]["r3"]
+    rows = {
+        "Threads launched": "Threads",
+        "Registers per thread": "Registers Per Thread",
+        "Avg. active threads per warp (of 32)": "Avg. Active Threads Per Warp",
+        "Warp cycles per issued instruction": "Warp Cycles Per Issued Instruction",
+        "Compute (SM) throughput": "Compute (SM) Throughput",
+        "Memory throughput": "Memory Throughput",
+        "L2 cache throughput": "L2 Cache Throughput",
+        "Achieved occupancy": "Achieved Occupancy",
+    }
+    for label, name in rows.items():
+        v1, v3 = c1[name], c3[name]
+        if name == "Threads":
+            v1, v3 = v1.split()[0], v3.split()[0]
+        if name == "Registers Per Thread":
+            v1, v3 = v1.split()[0], v3.split()[0]
+        assert f"| {label} | {v1} | {v3} |" in readme, label
+    assert c3["Threads"].split()[0] == "40,960"  # 40 multiprocessors x 1,024 threads
+    # The two quoted durations and the 0.4% claim.
+    d1 = int(c1["Duration"].split()[0].replace(",", ""))
+    d3 = int(c3["Duration"].split()[0].replace(",", ""))
+    assert abs(d3 / d1 - 1) < 0.005
+    assert c1["Duration"].split()[0] in readme and c3["Duration"].split()[0] in readme
+
+
+def test_gpu_r3_log_matches_the_committed_summary():
+    log = (ROOT / "LOG.md").read_text().replace("**", "")
+    b = json.loads((ROOT / "results" / "gpu-r3-summary.json").read_text())["summary"]["benchmark"]
+    for label, key in (("R1", "r1_first"), ("R3", "r3"), ("R1 again", "r1_again")):
+        run = b[key]
+        text = f"{label} {run['median_kernel_s']:.3f} s ({run['million_events_per_s']}"
+        assert text in log, text
+    assert "did not hold for run time" in log

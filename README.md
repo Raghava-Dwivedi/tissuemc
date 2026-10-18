@@ -2,7 +2,7 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch), which targets it, is written and tested on the host but has not run on a GPU, so no result is claimed for it yet. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1, so lane utilization is not what limits speed; what does is not yet identified. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
@@ -105,7 +105,7 @@ Caveats, as recorded in the result file:
 
 ## GPU, rung R0 (Tesla T4)
 
-R0 is the deliberately naive baseline: one thread per photon, float32 transport, global atomic tallies (running totals in `double`). Design: [`docs/rungs/R0.md`](docs/rungs/R0.md). It ran on a free Colab Tesla T4 (CUDA 13.0) at commit `a3e9804`; the record is [`results/gpu-r0-summary.json`](results/gpu-r0-summary.json), the pasted final summary of [`notebooks/colab_gpu.ipynb`](notebooks/colab_gpu.ipynb). The per-file outputs from that session were not saved. Prediction log: [`LOG.md`](LOG.md); **no prediction was recorded before this run**, and the log says so.
+R0 is the deliberately naive baseline: one thread per photon, float32 transport, global atomic tallies (running totals in `double`). Design: [`docs/rungs/R0.md`](docs/rungs/R0.md). It ran on a free Colab Tesla T4 (CUDA 13.0) at commit `a3e9804`; the record is [`results/gpu-r0-summary.json`](results/gpu-r0-summary.json), the pasted final summary of [`notebooks/colab_gpu.ipynb`](notebooks/colab_gpu.ipynb). The per-file outputs from that session were not saved. Log: [`LOG.md`](LOG.md), which is measurement-only; **no prediction was recorded before this run**.
 
 - **Validation:** all 24 checks pass on the GPU engine, the same published values and independent oracle as the CPU engine.
 - **Agreement with the CPU on identical photons** (CPU float32 against GPU, same seed and batches; limits fixed before any GPU run):
@@ -151,11 +151,42 @@ R1 accumulates absorbed weight per layer inside each thread and adds it to the g
 | Warp cycles per issued instruction | 22.83 cycle | 20.10 cycle |
 | Achieved occupancy | 85.67 % | 86.05 % |
 
-**What the counters say** (my reading, not something the profiler states): only **4.75 of 32 lanes are active per warp instruction (15%)**, the same in both rungs. That matches the 16% I estimated beforehand from the host-side distribution of steps per photon (mean 1,537, median 226, 90th percentile 7,386), which was an estimate and is now measured. Memory and L2 throughput are low (at most 14% and 12%), so global atomics are not what limits this kernel, which fits R1's modest gain. Occupancy is high (86%). Each warp waits about 20 cycles between instructions it issues. Divergence is therefore the main loss, and the next rung targets it: photon relaunch, so a thread that finishes a photon picks up another instead of idling. The depth-profile privatization rung (R2) is deferred because memory and L2 are not busy.
+**What the counters say** (my reading, not something the profiler states): only **4.75 of 32 lanes are active per warp instruction (15%)**, the same in both rungs. That matches the 16% I estimated beforehand from the host-side distribution of steps per photon (mean 1,537, median 226, 90th percentile 7,386), which was an estimate and is now measured. Memory and L2 throughput are low (at most 14% and 12%), so global atomics are not what limits this kernel, which fits R1's modest gain. Occupancy is high (86%). Each warp waits about 20 cycles between instructions it issues. That pointed at divergence as the main loss, which the next rung (R3, below) tests; the reading did not hold up. The depth-profile privatization rung (R2) is deferred because memory and L2 are not busy.
+
+## GPU, rung R3 (photon relaunch)
+
+R3 keeps R1's scoring and changes how threads are used: a fixed set of resident threads, here 40,960 (the T4's maximum, 40 multiprocessors × 1,024), each claim photons from a shared counter and take the next one as soon as theirs ends, one step per loop iteration. Design: [`docs/rungs/R3.md`](docs/rungs/R3.md). The record is [`results/gpu-r3-summary.json`](results/gpu-r3-summary.json), the pasted summary of [`notebooks/colab_gpu_r3.ipynb`](notebooks/colab_gpu_r3.ipynb); the per-file JSON results were not saved. [`LOG.md`](LOG.md) is measurement-only, so no prediction was recorded.
+
+- **Validation:** all 24 checks pass on rung 3.
+- **Agreement with the CPU on identical photons** (2×10⁶ photons, float32 CPU against the GPU, limits fixed before any GPU run): both R1 and R3 pass. This run is the first to compare **absorbed weight**, the tally R1 changed: total gap 0.0034 standard errors for R1 and 0.00024 for R3, worst per-batch relative gap 4.0e-05 and 4.1e-05 (limits 0.25 and 5×10⁻³).
+- **Throughput**, same session, 4×10⁶ photons, median kernel time of 5 repeats:
+
+| Run | Median kernel time | Million events/s |
+|---|---|---|
+| R1 (first) | 10.639 s | 581.7 |
+| **R3** | **11.338 s** | **545.9** |
+| R1 (again) | 10.823 s | 571.8 |
+
+**R3 was not faster than R1: it was about 5.7% slower** (11.338 s against 10.731 s, the average of the two R1 runs). All ten R1 repeats (10.35 to 11.11 s) were faster than all five R3 repeats (11.33 to 11.43 s), and R1 ran both before and after R3. R1's own first run spread by 7% across its five repeats, so the size of the gap is rough; that R3 gave no speedup is not.
+
+- **Hardware counters** (Nsight Compute, 2×10⁶ photons rather than the 2×10⁵ used earlier, because R3's 40,960 lanes would otherwise get only about five photons each; ratios and percentages only, because profiling locks the GPU clocks):
+
+| Counter | R1 | R3 |
+|---|---|---|
+| Threads launched | 2,000,000 | 40,960 |
+| Registers per thread | 48 | 37 |
+| Avg. active threads per warp (of 32) | 4.74 | 21.61 |
+| Warp cycles per issued instruction | 19.95 cycle | 98.09 cycle |
+| Compute (SM) throughput | 34.80 % | 8.12 % |
+| Memory throughput | 14.48 % | 16.81 % |
+| L2 cache throughput | 12.39 % | 11.65 % |
+| Achieved occupancy | 86.97 % | 99.78 % |
+
+**What the counters say** (my reading, not something the profiler states): R3 did what it was built to do, raising the active lanes per warp from 4.74 to 21.61 of 32 (15% to 68%). Run time did not follow. Each warp now waited 98 cycles between issued instructions instead of 20 (4.9×), which roughly cancels the 4.6× more lanes working in each instruction; under the profiler's locked clocks the two kernels took 8,924,395,584 and 8,962,183,072 ns, within 0.4% of each other (that run uses half the photons at lower, locked clocks, so it is not a second timing of the benchmark). Compute throughput fell from 34.80 % to 8.12 %, and memory and L2 stay under 17%. So lane utilization, memory bandwidth and atomic throughput are each not the main limit on run time (the atomics matter a little: halving them gave R1's 10%). **What is the main limit is not identified.** This also overturns my reading after R1 that divergence was the main loss: divergence was real, and R3 removed most of it, but removing it did not make the kernel faster. The counters collected here do not show *why* each warp waits so long; the next measurement collects the stall reasons.
 
 ## Development process
 
-The author designs and specifies the project, runs the benchmarks, and reviews the results. Each GPU rung's entry in [`LOG.md`](LOG.md) is meant to hold the author's prediction, written before the run; for R0 and R1 none was recorded, and the log says so rather than filling it in afterwards. Implementation is AI-assisted, under that review. [`BUILD_LOG.md`](BUILD_LOG.md) records the defects found and fixed along the way, as they happened. [`VALIDATION.md`](VALIDATION.md) maps each claim to the independent check behind it.
+The author designs and specifies the project, runs the benchmarks, and reviews the results. [`LOG.md`](LOG.md) is measurement-only: for each GPU rung it records what was measured and what the data suggest, with hypotheses labelled as such and checked by the next run. No forecasts are recorded; R0 and R1 were run without one, and the author chose measurement-only from then on. Implementation is AI-assisted, under that review. [`BUILD_LOG.md`](BUILD_LOG.md) records the defects found and fixed along the way, as they happened. [`VALIDATION.md`](VALIDATION.md) maps each claim to the independent check behind it.
 
 ## License
 

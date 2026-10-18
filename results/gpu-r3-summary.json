@@ -1,0 +1,152 @@
+{
+ "provenance": "The final-cell summary of notebooks/colab_gpu_r3.ipynb, run by the repository owner on a free Colab T4 at the commit named inside (the run date was not recorded), and pasted in. The 'summary' value is the pasted block, unchanged. The per-file JSON results written in the Colab session were not saved. Nsight Compute locks the GPU clocks while profiling, so 'Duration' in the counters is not comparable with the benchmark's kernel times; only the percentages and ratios are used. The counters were collected at 2,000,000 photons.",
+ "rung": 3,
+ "prediction_recorded_before_run": false,
+ "summary": {
+  "commit": "902f6d7a83a45c38750d7a01e70f659d34920220",
+  "device": "Tesla T4 (sm_75)",
+  "validation_r3": {
+   "checks": 24,
+   "passed": 24,
+   "failed": []
+  },
+  "cross_engine_r1": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033795226185295213,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.951635856984501e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "cross_engine_r3": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0016463514400557719,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.0034959757044906096,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.000237856551251698,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     4.113738345399845e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.1960252191205933e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "benchmark": {
+   "r1_first": {
+    "median_kernel_s": 10.639,
+    "kernel_seconds": [
+     10.352,
+     10.505,
+     10.639,
+     10.874,
+     11.108
+    ],
+    "million_events_per_s": 581.7,
+    "validated_first": true
+   },
+   "r3": {
+    "median_kernel_s": 11.338,
+    "kernel_seconds": [
+     11.43,
+     11.338,
+     11.328,
+     11.327,
+     11.351
+    ],
+    "million_events_per_s": 545.9,
+    "validated_first": true
+   },
+   "r1_again": {
+    "median_kernel_s": 10.823,
+    "kernel_seconds": [
+     10.92,
+     10.881,
+     10.823,
+     10.799,
+     10.779
+    ],
+    "million_events_per_s": 571.8,
+    "validated_first": true
+   }
+  },
+  "counters": {
+   "r1": {
+    "Duration": "8,924,395,584 ns",
+    "Compute (SM) Throughput": "34.80 %",
+    "Memory Throughput": "14.48 %",
+    "L2 Cache Throughput": "12.39 %",
+    "Avg. Active Threads Per Warp": "4.74",
+    "Warp Cycles Per Issued Instruction": "19.95 cycle",
+    "Achieved Occupancy": "86.97 %",
+    "Theoretical Occupancy": "100 %",
+    "Threads": "2,000,000 thread",
+    "Registers Per Thread": "48 register/thread"
+   },
+   "r3": {
+    "Duration": "8,962,183,072 ns",
+    "Compute (SM) Throughput": "8.12 %",
+    "Memory Throughput": "16.81 %",
+    "L2 Cache Throughput": "11.65 %",
+    "Avg. Active Threads Per Warp": "21.61",
+    "Warp Cycles Per Issued Instruction": "98.09 cycle",
+    "Achieved Occupancy": "99.78 %",
+    "Theoretical Occupancy": "100 %",
+    "Threads": "40,960 thread",
+    "Registers Per Thread": "37 register/thread"
+   }
+  }
+ }
+}

@@ -1,8 +1,8 @@
 # Optimization log
 
-For each rung of the GPU study, the **prediction is written before the run**: what is expected to change, by roughly how much, and why. After the run the measurement goes next to it, with whether the prediction held and what explains the difference.
+This log is **measurement-only**: for each rung of the GPU study it records what changed, what was measured, and what the data show or suggest. No forecast is written before a run. The first plan was to record a prediction before each run; none was recorded for R0 or R1, and on 2026-10-18 the author chose measurement-only instead. The R0 and R1 entries below keep their original wording.
 
-A prediction that was wrong is as useful as one that was right. Nothing is edited after the fact; corrections go in as new dated notes.
+A hypothesis written after one run is labelled as one, and the next run says whether it held. Nothing is edited after the fact; corrections go in as new dated notes.
 
 ## R0: naive baseline
 
@@ -41,12 +41,22 @@ A prediction that was wrong is as useful as one that was right. Nothing is edite
 
 ## R3: photon relaunch (built before R2)
 
-*Design:* [`docs/rungs/R3.md`](docs/rungs/R3.md) · *Notebook:* [`notebooks/colab_gpu_r3.ipynb`](notebooks/colab_gpu_r3.ipynb)
+*Design:* [`docs/rungs/R3.md`](docs/rungs/R3.md) · *Notebook:* [`notebooks/colab_gpu_r3.ipynb`](notebooks/colab_gpu_r3.ipynb) · *Record:* [`results/gpu-r3-summary.json`](results/gpu-r3-summary.json)
 
-**Why this rung comes next:** R1's counters show memory and L2 at most 14% and 12% busy and only 4.75 of 32 lanes active per warp. The largest measured loss is lanes sitting idle, not memory traffic.
+**Prediction:** none, by design (measurement-only; see the note at the top).
 
-**Prediction (written before the run):** not yet recorded. The author writes it, in their own words, before running the benchmark cells.
+**Why this rung:** R1's counters showed memory and L2 at most 14% and 12% busy and only 4.75 of 32 lanes active per warp, so the largest measured loss looked like idle lanes, not memory traffic. The hypothesis recorded after R1 was that relaunch should recover much of that.
 
-**Result:** not run yet.
+**Result:**
+- Validation on the GPU, rung 3: 24 of 24 checks pass.
+- Same photons through the CPU (float32), 2×10⁶ photons, now including absorbed weight: R1 passes (absorbed total gap 0.0034 standard errors, worst per-batch 4.0e-05) and R3 passes (0.00024, 4.1e-05); R_d, T_t and event counts agree within the limits fixed before any GPU run (event gap 2.3e-06 for R1, 2.2e-06 for R3). **This closes the gap noted in the R1 entry:** R1's absorbed weight is now compared with the CPU per batch, not only through energy conservation. R3's gaps differ slightly from R1's; why was not checked (different generated code rounding some operations differently is one possibility).
+- Throughput, same session, 4×10⁶ photons, median kernel time of 5 repeats: R1 10.639 s (581.7 million events/s), **R3 11.338 s (545.9)**, R1 again 10.823 s (571.8). R3 is about 5.7% slower than the mean of the two R1 runs. All ten R1 repeats (10.35 to 11.11 s) beat all five R3 repeats (11.33 to 11.43 s); R1's first run alone spread by 7%, so the size of the gap is rough.
+- Hardware counters (Nsight Compute, 2×10⁶ photons): threads launched 2,000,000 (R1) and 40,960 (R3, the T4's maximum of 40 × 1,024); registers per thread 48 and 37; active threads per warp 4.74 and 21.61 of 32; warp cycles per issued instruction 19.95 and 98.09; compute throughput 34.80 % and 8.12 %; memory 14.48 % and 16.81 %; L2 12.39 % and 11.65 %; occupancy 86.97 % and 99.78 %; kernel duration at locked clocks 8,924,395,584 and 8,962,183,072 ns (+0.4%).
 
-**Did the prediction hold, and why?** Not run yet.
+**What the data show and suggest:**
+- Measured: R3 raised active lanes per warp 4.6× (15% to 68% of 32) and the kernel did not get faster. The hypothesis recorded after R1 held for lane utilization and **did not hold for run time**.
+- Measured: each warp waited 4.9× longer between issued instructions, which roughly cancels the 4.6× more lanes per instruction. If the work per photon is unchanged (assumed, not measured), R3 issues about 4.6× fewer warp instructions that each take about 4.9× longer.
+- Measured: compute throughput fell to 8.12 % and memory and L2 stay under 17%, so no throughput limit is being hit in either rung. Occupancy is already near its maximum, so more resident warps are not available.
+- Not known: why each warp waits so long. The counters collected here do not include stall reasons. One candidate, untested: per-thread state held in local memory (R3 uses 37 registers per thread against R1's 48, which could mean more state is kept in local memory; not checked).
+- This overturns the reading in the R1 entry that divergence was the main loss.
+- Next measurement, not another rung: collect warp stall reasons and local-memory counters for R1 and R3 (`notebooks/colab_gpu_diagnose.ipynb`). R2 stays deferred.

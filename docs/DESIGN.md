@@ -51,7 +51,7 @@ The README says this plainly.
 | G1 | Reproduce MCML's published validation results within statistical error. Cases are in §5. |
 | G2 | Multithreaded C++ CPU engine (float64), measured from 1 to 12 threads on an M4 Pro. |
 | G3 | CUDA engine on an NVIDIA T4 (free Colab or Kaggle). Every optimization step passes the validation suite before its speed is recorded. |
-| G4 | A measured optimization ladder (§6). For each step: a written prediction, a result, and an explanation. |
+| G4 | A measured optimization ladder (§6). For each step: a result and an explanation, with hypotheses labelled and checked by the next step. |
 | G5 | Honest baselines: CPU thread scaling, the original `mcml.c`, and MCX on the same GPU. MCX comparisons are approximate (§7). |
 | G6 | One-command reproduction of the validation suite on any machine; one notebook reproduces the GPU numbers. |
 
@@ -171,9 +171,9 @@ It supplies two reference values that depend on no published table:
 Each rung is one small, reviewable change. For every rung:
 
 1. The change ships with a one-page explainer.
-2. **A prediction is recorded in `LOG.md` before the run:** expected effect and why, in the author's words, informed by the measurements of the rung before. (R0 and R1 were run without one; the log says so.)
+2. **`LOG.md` is measurement-only:** it records what was measured and what the data suggest, not a forecast. (R0 and R1 were run without a prediction, and the author chose not to write them from then on.) A hypothesis is written down after a run, labelled as one, and the next run says whether it held.
 3. Raghava runs one Colab cell. It builds the code, validates V1–V3, benchmarks, and writes `results/rung-N.json`.
-4. Raghava commits the result and writes a short note on whether his prediction held.
+4. Raghava commits the result and reviews the log entry.
 
 | Rung | Change | What it teaches | Measured by |
 |---|---|---|---|
@@ -184,6 +184,8 @@ Each rung is one small, reviewable change. For every rung:
 | **R4** | **Math and launch tuning.** Fast intrinsics (`__expf`, `__logf`, `sincosf`); sweep block sizes for occupancy | Instruction cost vs. accuracy; occupancy | photons/s; whether z-scores still pass |
 
 **Order change after R1.** Rung numbers are names, not a schedule. R1's hardware counters (memory throughput 14%, L2 12%, 4.75 of 32 lanes active per warp) show warp divergence, not memory traffic, as the main loss, so **R3 is built next and R2 is deferred**. R2 stays in the ladder; whether it still helps is measured once divergence has been addressed.
+
+**After R3.** R3 raised the active lanes per warp from 4.74 to 21.61 of 32 and was about 6% slower than R1. Lane utilization is therefore not what limits the kernel, and R1's reading that divergence was the main loss did not hold. The next step is a measurement (warp stall reasons, local-memory counters), not another rung; R2 stays deferred.
 
 **Profiling.** If Nsight Compute (`ncu`) hardware counters are available on the free tier (tested in the week-1 smoke test), the study adds counter evidence. If not, everything above still works with in-kernel counters and `clock64()` timing, so no claim depends on `ncu`.
 
@@ -250,12 +252,12 @@ flowchart LR
 
 | Role | Responsibilities |
 |---|---|
-| **Raghava Dwivedi** | Design and specification. Writes each optimization prediction in `LOG.md` before the run. Runs every GPU benchmark on his own Colab/Kaggle account. Reviews results. Writes the project write-up and `VALIDATION.md`'s narrative. |
+| **Raghava Dwivedi** | Design and specification. Runs every GPU benchmark on his own Colab/Kaggle account. Reviews results. Writes the project write-up and `VALIDATION.md`'s narrative. |
 | **AI coding assistant** | Implements code to this specification, under review. |
 
 **Files that keep the record:**
 - `VALIDATION.md` maps each claim to the independent check that verifies it, and lists **only real defects**, copied from `BUILD_LOG.md`, which is kept during the build.
-- `LOG.md` records each prediction before its run and the outcome after.
+- `LOG.md` records each rung's measurements and what they suggest.
 
 ## 10. Repository layout and engineering bar
 
@@ -302,7 +304,7 @@ tissuemc/
 | M3 | Multithreaded CPU engine + Python stats, validation, and plots | Scaling curve from 1 to 12 threads; conservation test passes | Run it once on his Mac to confirm it reproduces |
 | M4 | `mcml.c` baseline harness | Our results and `mcml.c`'s agree statistically on V1–V3 | Approve the download |
 | M5 | CUDA R0 + Colab notebook | R0 passes V1–V3 on a T4 | **Week-1 smoke test**, then the first GPU run |
-| M6–M9 | Rungs R1–R4 | Each rung validates, benchmarks, and has a prediction plus outcome logged | Prediction + Colab run + commit per rung |
+| M6–M9 | Rungs R1–R4 | Each rung validates, benchmarks, and has its result and explanation logged | Colab run + commit + log entry per rung |
 | M10 | MCX comparison, README results table, plots, `VALIDATION.md` | All README numbers trace to committed result files | Runs `pmcx` on the same T4 |
 
 **Target dates:**
@@ -317,10 +319,10 @@ tissuemc/
 | `ncu` counters blocked on the free tier | Medium–High | In-kernel instrumentation (§6); no claim depends on `ncu`. |
 | `pmcx` doesn't run, or the MCX comparison is unfair | Medium | Label it approximate; try CUDAMCML; otherwise report CPU baselines only. |
 | V3 has no published standard errors | Certain | Use a documented tolerance derived from Gardner–MCML disagreement and photon count; V1/V2 carry the strict test. |
-| The author can't explain part of the system | Medium | Prediction log before every run, CPU/GPU shared physics code (less to learn), a design review before the GPU study is published. |
+| The author can't explain part of the system | Medium | A per-rung log of measurements and explanations, CPU/GPU shared physics code (less to learn), a design review before the GPU study is published. |
 | Prior-art question ("why not MCX?") | Certain | Honest answer: "MCX is faster and more general. I needed a reference I could validate and instrument; here's the measured gap and which design choice explains it." |
 | `mcml.c` licensing | Low | Downloaded by script with checksum, never redistributed. |
-| Time | High | Implementation milestones don't need the author's time; per-rung work (prediction, run, review) is about 30–45 min. |
+| Time | High | Implementation milestones don't need the author's time; per-rung work (run, review) is about 30–45 min. |
 
 ## 13. Success criteria
 
