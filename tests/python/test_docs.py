@@ -344,7 +344,7 @@ def test_diagnosis_claims_follow_from_the_saved_digest():
     work = (inst[1] * lanes[1]) / (inst[0] * lanes[0])
     assert 1.05 < work < 1.09
     assert f"{work:.2f}× the thread-instructions" in readme
+    assert rows["sm__warps_active.avg.pct_of_peak_sustained_active"] == ("86.85", "99.20")
     warps = tuple(v / 100 for v in g("sm__warps_active.avg.pct_of_peak_sustained_active"))
-    assert warps == (0.8685, 0.992)  # achieved warps active, as printed in the digest
     cycles = (inst[1] * lat[1] / warps[1]) / (inst[0] * lat[0] / warps[0])
     assert abs(cycles - 1) < 0.02
