@@ -60,3 +60,21 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Not known: why each warp waits so long. The counters collected here do not include stall reasons. One candidate, untested: per-thread state held in local memory (R3 uses 37 registers per thread against R1's 48, which could mean more state is kept in local memory; not checked).
 - This overturns the reading in the R1 entry that divergence was the main loss.
 - Next measurement, not another rung: collect warp stall reasons and local-memory counters for R1 and R3 (`notebooks/colab_gpu_diagnose.ipynb`). R2 stays deferred.
+
+## R3 diagnosis: why each warp waits so long (recorded 2026-10-18)
+
+*Notebook:* [`notebooks/colab_gpu_diagnose.ipynb`](notebooks/colab_gpu_diagnose.ipynb) · *Record:* [`results/gpu-r1-r3-diagnosis.json`](results/gpu-r1-r3-diagnosis.json)
+
+**Prediction:** none (measurement-only). This follows the R3 entry, which left the cause of the long waits open.
+
+**Result** (every Nsight Compute counter, R1 against R3, 500,000 photons, locked clocks): average warp latency 19.93 to 82.9 cycles per issued instruction; long scoreboard 12.39 to 62.42 and LG throttle 2.08 to 14.69 warps stalled per issue; warp instructions 72.33 to 20.17 billion; active lanes 4.73 to 18.16; issue slots used 34.88% to 9.59%; global and shared loads and stores 0 in both; local loads 0.91 to 0.94 billion and local stores 1.50 to 0.79 billion instructions; L1 hit rate for local loads 89.95% to 29.02%; register-spill requests 0 in both.
+
+**What the data show and suggest:**
+- Measured: long scoreboard plus LG throttle are 72.6% of R1's wait and 93.0% of R3's, and 99.5% of the increase. The extra wait is the load/store path.
+- Measured: the only data traffic through that path is per-thread local memory (plus atomics, which fell with the instruction count). The profiler reports no register spilling, so the local memory is not spilled registers.
+- Measured: R3 issues 0.28× the warp instructions but the same number of local-load instructions, and local-load sectors that missed L1 rose about 10× (0.36 to 3.60 billion). The collapse in L1 hit rate (local loads 89.95% to 29.02%) turns L1 hits into L2 round trips, which is what long scoreboard measures.
+- Derived: thread-instructions (warp instructions times active lanes) are 1.07× R1's, so the work per photon is unchanged to about 7%, and instructions times wait over resident warps predicts run times within 2% of each other, matching the profiler's near-equal durations at 2×10⁶ photons. This checks the assumption stated in the R3 entry.
+- This supports the candidate named in the R3 entry in one respect (the waits are local-memory waits) and not in another: the argument from register counts (37 against 48) is not supported, since nothing is spilled.
+- Not known: which variables are in local memory, and why the L1 hit rate fell. Candidates from reading the code, untested: the random generator's four-word buffer, indexed at run time, and the per-layer accumulator array, indexed by layer (R1 and R3 only).
+- Next: a rung that removes the run-time-indexed per-thread arrays from the hot loop, judged by local-memory instruction counts, stall reasons and run time, not by run time alone.
+

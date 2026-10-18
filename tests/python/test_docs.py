@@ -254,3 +254,97 @@ def test_gpu_r3_log_matches_the_committed_summary():
         text = f"{label} {run['median_kernel_s']:.3f} s ({run['million_events_per_s']}"
         assert text in log, text
     assert "did not hold for run time" in log
+
+
+def _diagnosis_rows():
+    """Metric -> (R1 value, R3 value) as printed, from the saved diagnostic digest."""
+    import re
+
+    data = json.loads((ROOT / "results" / "gpu-r1-r3-diagnosis.json").read_text())
+    assert data["photons"] == 500000 and data["rungs"] == {"A": 1, "B": 3}
+    rows = {}
+    for line in data["digest"].splitlines():
+        m = re.match(r"\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$", line)
+        if m:
+            rows[m.group(1)] = (m.group(2), m.group(3))
+    return rows
+
+
+def _num(text):
+    return float(text.replace(",", ""))
+
+
+def test_diagnosis_readme_numbers_match_the_saved_digest():
+    rows = _diagnosis_rows()
+    readme = README.replace("**", "")
+    for label, name in (
+        (
+            "Issue slots used (% of peak while active)",
+            "smsp__issue_active.avg.pct_of_peak_sustained_active",
+        ),
+        ("Eligible warps per cycle", "smsp__warps_eligible.avg.per_cycle_active"),
+        (
+            "Average active lanes per instruction",
+            "smsp__thread_inst_executed_per_inst_executed.ratio",
+        ),
+        ("L1 hit rate, local loads (%)", "l1tex__t_sector_pipe_lsu_mem_local_op_ld_hit_rate.pct"),
+        ("L1 hit rate, local stores (%)", "l1tex__t_sector_pipe_lsu_mem_local_op_st_hit_rate.pct"),
+        ("Register-spill requests", "derived__local_spilling_requests"),
+        (
+            "Total wait (average warp latency, cycles)",
+            "smsp__average_warp_latency_per_inst_issued.ratio",
+        ),
+    ):
+        assert f"| {label} | {rows[name][0]} | {rows[name][1]} |" in readme, label
+    pre, suf = "smsp__average_warps_issue_stalled_", "_per_issue_active.ratio"
+    for reason in ("long_scoreboard", "lg_throttle"):
+        a, b = rows[pre + reason + suf]
+        assert f"| {a} | {b} |" in readme, reason
+    for label, name in (
+        ("Warp instructions executed (billions)", "smsp__inst_executed.sum"),
+        ("Local-memory load instructions (billions)", "smsp__sass_inst_executed_op_local_ld.sum"),
+        ("Local-memory store instructions (billions)", "smsp__sass_inst_executed_op_local_st.sum"),
+        ("Local-memory sectors requested (billions)", "memory_l2_theoretical_sectors_local"),
+    ):
+        a, b = (_num(v) / 1e9 for v in rows[name])
+        assert f"| {label} | {a:.2f} | {b:.2f} |" in readme, label
+
+
+def test_diagnosis_claims_follow_from_the_saved_digest():
+    rows = _diagnosis_rows()
+    readme, log = README.replace("**", ""), (ROOT / "LOG.md").read_text().replace("**", "")
+    pre, suf = "smsp__average_warps_issue_stalled_", "_per_issue_active.ratio"
+    g = lambda n: tuple(_num(v) for v in rows[n])  # noqa: E731
+    lat = g("smsp__average_warp_latency_per_inst_issued.ratio")
+    ls, lg = g(pre + "long_scoreboard" + suf), g(pre + "lg_throttle" + suf)
+    added = 100 * ((ls[1] - ls[0]) + (lg[1] - lg[0])) / (lat[1] - lat[0])
+    assert added > 99  # "accounts for 99.5% of the increase"
+    assert f"{added:.1f}% of the" in readme and f"{added:.1f}% of the increase" in log
+    # The listed stall reasons add up to the reported latency, so the breakdown is complete.
+    for k in (0, 1):
+        total = sum(g(n)[k] for n in rows if n.startswith(pre))
+        assert abs(total - lat[k]) < 0.1 * lat[k] / 10, (k, total, lat[k])
+    # "Neither rung issues any global or shared loads or stores."
+    for n in (
+        "smsp__sass_inst_executed_op_global_ld.sum",
+        "smsp__sass_inst_executed_op_global_st.sum",
+        "smsp__sass_inst_executed_op_shared_ld.sum",
+        "smsp__sass_inst_executed_op_shared_st.sum",
+        "smsp__inst_executed_op_global_red.sum",
+    ):
+        assert g(n) == (0.0, 0.0), n
+    # "The same number of local loads": within 5%.
+    ld = g("smsp__sass_inst_executed_op_local_ld.sum")
+    assert abs(ld[1] / ld[0] - 1) < 0.05
+    # "About 7% more thread-instructions" and the near-equal run-time estimate.
+    inst, lanes = (
+        g("smsp__inst_executed.sum"),
+        g("smsp__thread_inst_executed_per_inst_executed.ratio"),
+    )
+    work = (inst[1] * lanes[1]) / (inst[0] * lanes[0])
+    assert 1.05 < work < 1.09
+    assert f"{work:.2f}× the thread-instructions" in readme
+    warps = tuple(v / 100 for v in g("sm__warps_active.avg.pct_of_peak_sustained_active"))
+    assert warps == (0.8685, 0.992)  # achieved warps active, as printed in the digest
+    cycles = (inst[1] * lat[1] / warps[1]) / (inst[0] * lat[0] / warps[0])
+    assert abs(cycles - 1) < 0.02

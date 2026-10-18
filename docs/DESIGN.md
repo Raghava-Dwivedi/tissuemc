@@ -185,7 +185,9 @@ Each rung is one small, reviewable change. For every rung:
 
 **Order change after R1.** Rung numbers are names, not a schedule. R1's hardware counters (memory throughput 14%, L2 12%, 4.75 of 32 lanes active per warp) show warp divergence, not memory traffic, as the main loss, so **R3 is built next and R2 is deferred**. R2 stays in the ladder; whether it still helps is measured once divergence has been addressed.
 
-**After R3.** R3 raised the active lanes per warp from 4.74 to 21.61 of 32 and was about 6% slower than R1. Lane utilization is therefore not what limits the kernel, and R1's reading that divergence was the main loss did not hold. The next step is a measurement (warp stall reasons, local-memory counters), not another rung; R2 stays deferred.
+**After R3.** R3 raised the active lanes per warp from 4.74 to 21.61 of 32 and was about 6% slower than R1. Lane utilization is therefore not what limits the kernel, and R1's reading that divergence was the main loss did not hold. The next step was a measurement (warp stall reasons, local-memory counters), not another rung; R2 stays deferred.
+
+**After the diagnosis.** The stall breakdown put 93% of R3's per-instruction wait on the load/store path, all of it per-thread local memory (no global or shared traffic, no register spills), with the L1 hit rate for local loads falling from 90% to 29%. The limit on this kernel is the latency of per-thread local memory, not divergence, atomics or bandwidth. The next rung, R5 (state in registers), removes the run-time-indexed per-thread arrays from the hot loop. Rung numbers are names, not a schedule; R4 (math and launch tuning) and R2 stay in the ladder.
 
 **Profiling.** If Nsight Compute (`ncu`) hardware counters are available on the free tier (tested in the week-1 smoke test), the study adds counter evidence. If not, everything above still works with in-kernel counters and `clock64()` timing, so no claim depends on `ncu`.
 

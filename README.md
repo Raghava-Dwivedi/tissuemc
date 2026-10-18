@@ -182,7 +182,41 @@ R3 keeps R1's scoring and changes how threads are used: a fixed set of resident 
 | L2 cache throughput | 12.39 % | 11.65 % |
 | Achieved occupancy | 86.97 % | 99.78 % |
 
-**What the counters say** (my reading, not something the profiler states): R3 did what it was built to do, raising the active lanes per warp from 4.74 to 21.61 of 32 (15% to 68%). Run time did not follow. Each warp now waited 98 cycles between issued instructions instead of 20 (4.9×), which roughly cancels the 4.6× more lanes working in each instruction; under the profiler's locked clocks the two kernels took 8,924,395,584 and 8,962,183,072 ns, within 0.4% of each other (that run uses half the photons at lower, locked clocks, so it is not a second timing of the benchmark). Compute throughput fell from 34.80 % to 8.12 %, and memory and L2 stay under 17%. So lane utilization, memory bandwidth and atomic throughput are each not the main limit on run time (the atomics matter a little: halving them gave R1's 10%). **What is the main limit is not identified.** This also overturns my reading after R1 that divergence was the main loss: divergence was real, and R3 removed most of it, but removing it did not make the kernel faster. The counters collected here do not show *why* each warp waits so long; the next measurement collects the stall reasons.
+**What the counters say** (my reading, not something the profiler states): R3 did what it was built to do, raising the active lanes per warp from 4.74 to 21.61 of 32 (15% to 68%). Run time did not follow. Each warp now waited 98 cycles between issued instructions instead of 20 (4.9×), which roughly cancels the 4.6× more lanes working in each instruction; under the profiler's locked clocks the two kernels took 8,924,395,584 and 8,962,183,072 ns, within 0.4% of each other (that run uses half the photons at lower, locked clocks, so it is not a second timing of the benchmark). Compute throughput fell from 34.80 % to 8.12 %, and memory and L2 stay under 17%. So lane utilization, memory bandwidth and atomic throughput are each not the main limit on run time (the atomics matter a little: halving them gave R1's 10%). **What is the main limit is not identified.** This also overturns my reading after R1 that divergence was the main loss: divergence was real, and R3 removed most of it, but removing it did not make the kernel faster. The diagnostic run below shows why each warp waits so long.
+
+### Why each R3 warp waits so long
+
+The diagnostic run collected every Nsight Compute counter for R1 and R3 on 500,000 photons ([`results/gpu-r1-r3-diagnosis.json`](results/gpu-r1-r3-diagnosis.json), the printed output of [`notebooks/colab_gpu_diagnose.ipynb`](notebooks/colab_gpu_diagnose.ipynb)). Ratios and percentages only, as before. The waits break down like this:
+
+| Per issued instruction, warps stalled on | R1 | R3 |
+|---|---|---|
+| Total wait (average warp latency, cycles) | 19.93 | 82.90 |
+| Long scoreboard (waiting for a load from local, global, surface or texture memory) | 12.39 | 62.42 |
+| LG throttle (the local/global load-store queue is full) | 2.08 | 14.69 |
+| Every other reason together | 5.50 | 5.83 |
+
+| Counter | R1 | R3 |
+|---|---|---|
+| Warp instructions executed (billions) | 72.33 | 20.17 |
+| Average active lanes per instruction | 4.73 | 18.16 |
+| Issue slots used (% of peak while active) | 34.88 | 9.59 |
+| Eligible warps per cycle | 0.51 | 0.15 |
+| Global or shared loads and stores | 0 | 0 |
+| Local-memory load instructions (billions) | 0.91 | 0.94 |
+| Local-memory store instructions (billions) | 1.50 | 0.79 |
+| Local-memory sectors requested (billions) | 8.38 | 8.76 |
+| L1 hit rate, local loads (%) | 89.95 | 29.02 |
+| L1 hit rate, local stores (%) | 95.66 | 66.92 |
+| Register-spill requests | 0 | 0 |
+
+**What the counters say** (my reading):
+
+- **The extra wait is almost entirely the load/store path.** Long scoreboard plus LG throttle make up 73% of R1's wait and 93% of R3's, and account for 99.5% of the 63.0-cycle increase. Arithmetic, branches and the other stall reasons barely moved.
+- **That load/store traffic is the threads' own local memory.** Neither rung issues any global or shared loads or stores; the tissue geometry is read from constant memory and the tallies go through atomics, which fell with the instruction count (to 0.23×). The profiler counts no register spills, so this is not spilled registers: it is per-thread arrays or structures that the compiler keeps in stack memory.
+- **R3 does not reduce that traffic, and it misses the L1 cache far more.** R3 executes 0.28× the warp instructions of R1, but the same number of local loads and a similar volume of local sectors, so local memory is 3.7× as large a share of what each warp does. The L1 hit rate for local loads fell from 89.95% to 29.02%, so about 10× as many local-load sectors went on to L2 (0.36 to 3.60 billion). A miss waits for L2 instead of L1, which is a long scoreboard stall.
+- **The earlier assumption that R3 does the same work per photon holds to about 7%.** Warp instructions times active lanes gives 1.07× the thread-instructions for R3, and instructions times wait per instruction divided by resident warps predicts the two kernels' run times within 2% of each other, which matches the profiler's near-equal durations at 2×10⁶ photons.
+
+What the counters do **not** say: which variables live in local memory (I suspect the random generator's four-word buffer, which is indexed at run time, and the per-layer accumulator array that R1 and R3 index by layer; that is from reading the code, not from a measurement), or why the L1 hit rate fell. The next rung tests the first of these directly.
 
 ## Development process
 
