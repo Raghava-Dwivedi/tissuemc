@@ -101,3 +101,19 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Hypotheses, untested: the per-event atomic add into the depth profile (about 6×10⁹ per run, the same in all three; hot bins near the surface may serialize at L2, which an average L2 busy percentage does not show); other per-event work that is identical in every kernel. This reopens a question the R1 entry closed too early: that entry read atomics as not the main limit because L2 was only about 12% busy, which measures bandwidth, not contention on one address.
 - Next: read R6's stall reasons and its atomic and L2 counters (the digest cell of the same notebook, or the saved `.ncu.csv` files if the session still has them); then decide between an ablation that removes the depth-profile atomic and the deferred rung R2 (shared-memory histograms), which tests the same thing and would also be the fix.
 
+## R6 counters: the wait moved to the atomic path (recorded 2026-10-18)
+
+*Record:* [`results/gpu-r3-r6-digest.json`](results/gpu-r3-r6-digest.json)
+
+**Prediction:** none (measurement-only). This follows the R5 and R6 entry, which left open what R1, R5 and R6 share.
+
+**Result** (every counter, R3 against R6, 500,000 photons, locked clocks): local loads and stores 0.94 and 0.79 billion to zero; DRAM bytes written 70.7 gigabytes to 6656 bytes; warp instructions 20.19 to 18.62 billion; wait per issued instruction 85.28 to 89.84 cycles, of which LG throttle 15.22 to 70.36 and long scoreboard 64.31 to 10.48; atomic instructions 0.035 and 0.035 billion; busiest L2 slice 63.64% and 63.78% of peak against averages of 12.49% and 2.08%; kernel duration at locked clocks 2.297 and 2.258 seconds.
+
+**What the data show and suggest:**
+- Measured: the local memory is gone and the wait per instruction did not fall (85.28 to 89.84 cycles). The long-scoreboard wait (53.8 cycles) was replaced by an almost equal LG-throttle wait (55.1 cycles): LG throttle is now 78% of the wait.
+- Measured: the only load/store instructions R6 issues are atomic adds, and their count equals R3's. By construction nearly all are the per-event depth-profile adds (about 1,500 per photon against about 6 others).
+- Measured: the busiest L2 slice is at 63.78% of peak against an average of 2.08%, and was at 63.64% in R3 too, so the local-memory traffic did not set it.
+- Suggested, not tested: the run time of R1, R5 and R6 is set by the depth-profile atomics serializing at one L2 slice. That explains their equal times and R3's further 7%.
+- This corrects the R1 entry's reading that atomics were not the main limit: that rested on average L2 busy percentages, which a hot slice does not show. It also means the earlier decision to defer R2 (shared-memory histograms) was made on the wrong evidence.
+- Next: remove the depth and radius profile atomics from R6 as a diagnostic (the profiles come out as zeros, everything else unchanged) and time it. If the time drops, the atomics are the floor, and R2 or a spread-out copy of the profile is the fix; if not, the reading above is wrong.
+

@@ -435,3 +435,85 @@ def test_the_docs_do_not_claim_a_limiter_the_data_do_not_support():
         assert "are each not the main limit on run time" not in text
     assert "After R5 and R6" in design and "do not identify" in design
     assert "not yet identified" in README  # the floor R1, R5 and R6 share
+
+
+def _digest_rows(name):
+    import re
+
+    rows = {}
+    for line in json.loads((ROOT / "results" / name).read_text())["digest"].splitlines():
+        m = re.match(r"\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)$", line)
+        if m:
+            rows[m.group(1)] = (m.group(2), m.group(3))
+    return rows
+
+
+def test_r6_counters_readme_numbers_match_the_saved_digest():
+    data = json.loads((ROOT / "results" / "gpu-r3-r6-digest.json").read_text())
+    assert data["rungs"] == {"A": 3, "B": 6} and data["photons"] == 500000
+    rows, readme = _digest_rows("gpu-r3-r6-digest.json"), README.replace("**", "")
+    pre, suf = "smsp__average_warps_issue_stalled_", "_per_issue_active.ratio"
+    for label, name in (
+        (
+            "Average warp latency per issued instruction (cycles)",
+            "smsp__average_warp_latency_per_inst_issued.ratio",
+        ),
+        ("Waiting for room in the load/store queue (LG throttle)", pre + "lg_throttle" + suf),
+        ("Waiting for a load result (long scoreboard)", pre + "long_scoreboard" + suf),
+        (
+            "Busiest L2 slice, throughput (% of peak)",
+            "lts__throughput.max.pct_of_peak_sustained_elapsed",
+        ),
+        (
+            "Average over L2 slices, throughput (% of peak)",
+            "lts__throughput.avg.pct_of_peak_sustained_elapsed",
+        ),
+        (
+            "Busiest L2 slice, atomic unit busy (%)",
+            "lts__d_atomic_input_cycles_active.max.pct_of_peak_sustained_elapsed",
+        ),
+    ):
+        assert f"| {label} | {rows[name][0]} | {rows[name][1]} |" in readme, label
+    num = lambda s: float(s.replace(",", ""))  # noqa: E731
+    g = lambda n: tuple(num(v) for v in rows[n])  # noqa: E731
+    # The claims in the text.
+    for n in (
+        "smsp__sass_inst_executed_op_local_ld.sum",
+        "smsp__sass_inst_executed_op_local_st.sum",
+    ):
+        assert g(n)[1] == 0 and g(n)[0] > 0, n  # local memory is gone in R6, present in R3
+    for n in (
+        "smsp__sass_inst_executed_op_global_ld.sum",
+        "smsp__sass_inst_executed_op_global_st.sum",
+    ):
+        assert g(n) == (0.0, 0.0), n
+    lat, lg, ls = (
+        g("smsp__average_warp_latency_per_inst_issued.ratio"),
+        g(pre + "lg_throttle" + suf),
+        g(pre + "long_scoreboard" + suf),
+    )
+    assert lat[1] >= lat[0] * 0.99  # the wait did not shrink
+    assert abs((ls[0] - ls[1]) - (lg[1] - lg[0])) < 3  # long scoreboard was replaced by LG throttle
+    assert f"{100 * lg[1] / lat[1]:.0f}% of their wait" in readme
+    red, atom = (
+        g("smsp__inst_executed_op_global_red.sum"),
+        g("smsp__inst_executed_op_generic_atom_dot_alu.sum"),
+    )
+    a3, a6 = (red[0] + atom[0]) / 1e9, (red[1] + atom[1]) / 1e9
+    assert abs(a6 / a3 - 1) < 0.01  # "equals R3's"
+    assert f"{a6:.3f} billion warp-level instructions" in readme
+    mx, av = (
+        g("lts__throughput.max.pct_of_peak_sustained_elapsed"),
+        g("lts__throughput.avg.pct_of_peak_sustained_elapsed"),
+    )
+    assert abs(mx[0] - mx[1]) < 1  # the hot slice did not change when the local memory went
+    assert f"({mx[1] / av[1]:.0f}×)" in readme
+    cyc = g("sm__cycles_active.max"), g("sm__cycles_active.avg")
+    assert f"active {100 * (cyc[0][1] / cyc[1][1] - 1):.1f}% longer than the average" in readme
+
+
+def test_the_log_records_the_r6_counters_and_the_correction():
+    log = (ROOT / "LOG.md").read_text()
+    assert "R6 counters: the wait moved to the atomic path" in log
+    assert "Suggested, not tested" in log  # the reading is not presented as a finding
+    assert "This corrects the R1 entry's reading" in log

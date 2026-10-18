@@ -241,7 +241,35 @@ R5 (one photon per thread) and R6 (persistent lanes that relaunch) keep the rand
 - **R3's slowdown was caused by local memory, as the diagnostic run indicated.** Moving its state into registers (R6) brings it back to R1's time.
 - **Local memory was not what limited R1.** With it gone (R5), the time did not move. My earlier statement that local-memory latency was the limit on this kernel was true of R3's *extra* wait and wrong as a statement about the kernel.
 - **Something R1, R5 and R6 share sets their run time.** They differ in local-memory use, in how many warp instructions they issue (R6 issues far fewer than R1, from the R3 counters) and in whether they relaunch, yet they take the same time to within 0.1%. What they share is not identified.
-- **Candidates, untested:** the per-event atomic add into the depth profile (about 6×10⁹ per run, the same in all three; the hot bins near the surface receive many of them, and a profile's average L2 busy percentage would not show one hot address serializing); other per-event work that is the same in every kernel. R1's reading that atomics were not the limit rested on L2 being only about 12% busy, which does not measure that, so the question is open again. The profiling cells of this notebook measure R6's stall reasons and atomic counters; they will say which.
+- **Candidates, untested:** the per-event atomic add into the depth profile (about 6×10⁹ per run, the same in all three; the hot bins near the surface receive many of them, and a profile's average L2 busy percentage would not show one hot address serializing); other per-event work that is the same in every kernel. R1's reading that atomics were not the limit rested on L2 being only about 12% busy, which does not measure that, so the question is open again. R6's counters, in the next subsection, point at the first.
+
+### What R6's counters show
+
+The saved profiles of R3 and R6 (500,000 photons, every counter; [`results/gpu-r3-r6-digest.json`](results/gpu-r3-r6-digest.json)) say where R6's time goes now that its local memory is gone:
+
+| Counter | R3 | R6 |
+|---|---|---|
+| Local-memory load instructions (billions) | 0.94 | 0.00 |
+| Local-memory store instructions (billions) | 0.79 | 0.00 |
+| DRAM bytes written (gigabytes) | 70.7 | 0.000007 |
+| Warp instructions executed (billions) | 20.19 | 18.62 |
+| Average warp latency per issued instruction (cycles) | 85.28 | 89.84 |
+| Waiting for room in the load/store queue (LG throttle) | 15.22 | 70.36 |
+| Waiting for a load result (long scoreboard) | 64.31 | 10.48 |
+| Atomic add instructions (billions) | 0.035 | 0.035 |
+| Busiest L2 slice, throughput (% of peak) | 63.64 | 63.78 |
+| Average over L2 slices, throughput (% of peak) | 12.49 | 2.08 |
+| Busiest L2 slice, atomic unit busy (%) | 33.43 | 33.96 |
+| Kernel duration at locked clocks (seconds) | 2.297 | 2.258 |
+
+**What the counters say** (my reading):
+
+- **R6's local memory is gone, and the wait did not shrink; it moved.** Local loads and stores are zero and DRAM traffic vanished, yet the wait per instruction went from 85.28 to 89.84 cycles. The long-scoreboard wait fell by 53.8 cycles and the LG-throttle wait rose by 55.1: warps now wait for room in the load/store queue, which is 78% of their wait.
+- **The only load/store traffic left is atomic adds.** R6 issues no global or shared loads or stores, and its atomic count (0.035 billion warp-level instructions, now compiled as reductions) equals R3's (0.035 billion). By construction almost all of them are the per-event depth-profile adds: about 1,500 per photon, against about 6 other atomic adds per photon.
+- **One part of L2 is far busier than the rest, and removing the local memory did not change it.** The busiest L2 slice runs at 63.78% of peak while the average over slices is 2.08% (31×), with its atomic unit busy 33.96% of the time; in R3 the busiest slice was at 63.64% even though R3 sent 8.8 billion extra sectors to L2. Something that did not change between the kernels sets that slice's load, and the atomics are what did not change.
+- **Taken together:** the run time looks set by many atomic adds to a few depth bins, serialized at one L2 slice. That would explain why R1, R5 and R6 take the same time whatever their local-memory use or instruction count, and why R3's extra local-memory traffic cost it a further 7%. The streaming multiprocessors are evenly loaded (the busiest was active 1.1% longer than the average), so this is not a tail effect.
+
+This is a reading of counters that agree with each other, not a test. The test is to remove the atomics and see whether the time drops; that is the next experiment.
 
 ## Development process
 
