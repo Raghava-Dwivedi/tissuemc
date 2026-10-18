@@ -78,3 +78,17 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Not known: which variables are in local memory, and why the L1 hit rate fell. Candidates from reading the code, untested: the random generator's four-word buffer, indexed at run time, and the per-layer accumulator array, indexed by layer (R1 and R3 only).
 - Next: a rung that removes the run-time-indexed per-thread arrays from the hot loop, judged by local-memory instruction counts, stall reasons and run time, not by run time alone.
 
+## R5 and R6: per-thread state in registers
+
+*Design:* [`docs/rungs/R5.md`](docs/rungs/R5.md) · *Notebook:* [`notebooks/colab_gpu_r5.ipynb`](notebooks/colab_gpu_r5.ipynb)
+
+**Prediction:** none (measurement-only).
+
+**Why these rungs:** the diagnosis above put the extra wait on per-thread local memory. Reading the code, two things are indexed at run time and so live in local memory: the random generator's four-word buffer and the per-layer accumulator array (R1 and R3). R5 (one photon per thread) and R6 (persistent lanes) keep both in registers. With R1 and R3 they form a two-by-two comparison of arrays against registers and one photon per thread against relaunch.
+
+**Before any GPU run, from the continuous-integration build only:** the compiler's stack frame fell from 224 and 272 bytes to 32, and the static count of local-memory instructions from 149 and 197 to 10 (CUDA 12.0 toolkit; static, so it shows what was emitted, not what runs).
+
+**Result:** not run on a GPU yet.
+
+**Did the data support the diagnosis?** Not run yet.
+

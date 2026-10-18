@@ -2,7 +2,7 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1, so lane utilization is not what limits speed; what does is not yet identified. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, are written and tested on the host but have not run on a GPU, so no result is claimed for them yet. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
@@ -216,7 +216,7 @@ The diagnostic run collected every Nsight Compute counter for R1 and R3 on 500,0
 - **R3 does not reduce that traffic, and it misses the L1 cache far more.** R3 executes 0.28× the warp instructions of R1, but the same number of local loads and a similar volume of local sectors, so local memory is 3.7× as large a share of what each warp does. The L1 hit rate for local loads fell from 89.95% to 29.02%, so about 10× as many local-load sectors went on to L2 (0.36 to 3.60 billion). A miss waits for L2 instead of L1, which is a long scoreboard stall.
 - **The earlier assumption that R3 does the same work per photon holds to about 7%.** Warp instructions times active lanes gives 1.07× the thread-instructions for R3, and instructions times wait per instruction divided by resident warps predicts the two kernels' run times within 2% of each other, which matches the profiler's near-equal durations at 2×10⁶ photons.
 
-What the counters do **not** say: which variables live in local memory (I suspect the random generator's four-word buffer, which is indexed at run time, and the per-layer accumulator array that R1 and R3 index by layer; that is from reading the code, not from a measurement), or why the L1 hit rate fell. The next rung tests the first of these directly.
+What the counters do **not** say: which variables live in local memory (I suspect the random generator's four-word buffer, which is indexed at run time, and the per-layer accumulator array that R1 and R3 index by layer; that is from reading the code, not from a measurement), or why the L1 hit rate fell. Rungs R5 and R6 ([`docs/rungs/R5.md`](docs/rungs/R5.md)) test the first of these directly.
 
 ## Development process
 
