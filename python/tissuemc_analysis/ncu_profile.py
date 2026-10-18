@@ -81,7 +81,10 @@ KEY_METRICS = [
 
 
 def parse_ncu_csv(text: str) -> dict[str, dict[str, dict[str, str]]]:
-    """Section -> metric name -> {value, unit}, from ``ncu --csv --page details`` output.
+    """Section -> metric name -> {value, unit}, from ``ncu --csv`` output.
+
+    The details page has a "Section Name" column; the raw page does not, and its metrics are
+    returned under the empty section name.
 
     Only the first profiled kernel is kept. Lines before the CSV header (program output) are
     ignored.
@@ -92,12 +95,17 @@ def parse_ncu_csv(text: str) -> dict[str, dict[str, dict[str, str]]]:
         raise ValueError("no Nsight Compute CSV header found")
     out: dict[str, dict[str, dict[str, str]]] = {}
     first_id = None
-    for row in csv.DictReader(io.StringIO("\n".join(lines[start:]))):
+    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
+    needed = {"ID", "Metric Name", "Metric Unit", "Metric Value"}
+    if not needed <= set(reader.fieldnames or []):
+        raise ValueError(f"unexpected Nsight Compute columns: {reader.fieldnames}")
+    for row in reader:
         if first_id is None:
             first_id = row["ID"]
         if row["ID"] != first_id:
             break
-        section = out.setdefault(row["Section Name"], {})
+        # The details page groups metrics by section; the raw page has no such column.
+        section = out.setdefault(row.get("Section Name", ""), {})
         section[row["Metric Name"]] = {"value": row["Metric Value"], "unit": row["Metric Unit"]}
     return out
 
@@ -171,7 +179,13 @@ def digest(a: dict[str, dict[str, str]], b: dict[str, dict[str, str]]) -> list[s
 
 
 def profile(
-    binary: Path, config: Path, rung: int, photons: int, batches: int, full: bool = False
+    binary: Path,
+    config: Path,
+    rung: int,
+    photons: int,
+    batches: int,
+    full: bool = False,
+    keep_csv: Path | None = None,
 ) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "ncu.csv"
@@ -205,7 +219,11 @@ def profile(
             raise SystemExit(
                 f"ncu failed ({proc.returncode}): {(proc.stderr or proc.stdout)[-800:]}"
             )
-        return parse_ncu_csv(log.read_text())
+        text = log.read_text()
+        if keep_csv is not None:
+            keep_csv.parent.mkdir(parents=True, exist_ok=True)
+            keep_csv.write_text(text)  # before parsing: a full collection takes minutes
+        return parse_ncu_csv(text)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -240,7 +258,11 @@ def main(argv: list[str] | None = None) -> int:
     binary = args.binary or root / "build" / "tissuemc"
     config = args.config or root / "configs" / "bench" / "tissue_g09.mci"
     if args.full:
-        metrics = flatten(profile(binary, config, args.rung, args.photons, args.batches, full=True))
+        keep = args.output.with_suffix(".ncu.csv") if args.output else None
+        sections = profile(
+            binary, config, args.rung, args.photons, args.batches, full=True, keep_csv=keep
+        )
+        metrics = flatten(sections)
         print(f"rung {args.rung}, {args.photons} photons: {len(metrics)} counters collected")
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
