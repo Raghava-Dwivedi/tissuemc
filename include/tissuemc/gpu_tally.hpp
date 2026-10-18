@@ -184,6 +184,105 @@ TMC_HD inline void run_photon_r1(const Geometry<float> &geo, uint64_t seed, uint
     tally.flush_counters();
 }
 
+// Rung R5: R1's scoring with the per-layer accumulator held in registers.
+//
+// The profiler showed that the kernels' time goes to per-thread local memory, so R5 removes the
+// run-time-indexed arrays from the hot loop. R1 keeps one accumulator per layer in an array and
+// indexes it by the packet's layer, which the compiler places in local memory. Here the packet's
+// absorbed weight is summed in a single register for the layer it is currently in; when the packet
+// changes layer, that partial sum is published and a new one starts. The global atomics are
+// therefore one per layer change plus one at the end, which for a photon that stays in one layer
+// is still one, and the depth and radius profiles are unchanged. The random generator is
+// RegPhotonRng, for the same reason.
+//
+// A layer's total is now published in several partial sums rather than one. Each is a float sum of
+// at most a photon's weight, so the rounding is no worse than R1's (validation checks it).
+template <class T> struct GpuTallyR5 {
+    GpuTallyArrays<T> out;
+    int batch;
+    int layers;
+    unsigned long long events;
+    unsigned long long anomalies;
+    float run_sum;
+    int run_layer;
+
+    TMC_HD GpuTallyR5(const GpuTallyArrays<T> &arrays, int batch_index, int num_layers)
+        : out(arrays), batch(batch_index), layers(num_layers), events(0), anomalies(0),
+          run_sum(0.0f), run_layer(0) {}
+
+    TMC_HD void score_absorption(const Photon<float> &p, const Geometry<float> &geo, float w) {
+        ++events;
+        check(p, w);
+        if (p.layer != run_layer) {
+            publish();
+            run_layer = p.layer;
+        }
+        run_sum += w;
+        TMC_ATOMIC_ADD(&out.az[bin(p.z, geo.dz, geo.nz)], static_cast<T>(w));
+    }
+
+    TMC_HD void score_reflectance(const Photon<float> &p, const Geometry<float> &geo, float w) {
+        check(p, w);
+        TMC_ATOMIC_ADD(&out.rd[batch], static_cast<T>(w));
+        const float r = m::sqrt(p.x * p.x + p.y * p.y);
+        TMC_ATOMIC_ADD(&out.rr[bin(r, geo.dr, geo.nr)], static_cast<T>(w));
+    }
+
+    TMC_HD void score_transmittance(const Photon<float> &p, const Geometry<float> &, float w) {
+        check(p, w);
+        TMC_ATOMIC_ADD(&out.tt[batch], static_cast<T>(w));
+    }
+
+    // Start the next photon on a lane that is reused (rung R6).
+    TMC_HD void begin_photon(int batch_index) {
+        batch = batch_index;
+        events = 0;
+        anomalies = 0;
+        run_sum = 0.0f;
+        run_layer = 0;
+    }
+
+    // Publish what is left of the running sum and the counters when the photon ends.
+    TMC_HD void flush_counters() {
+        publish();
+        TMC_ATOMIC_ADD(&out.events[batch], events);
+        TMC_ATOMIC_ADD(&out.anomalies[batch], anomalies);
+    }
+
+  private:
+    TMC_HD void publish() {
+        if (run_sum != 0.0f) {
+            TMC_ATOMIC_ADD(&out.absorbed[batch * layers + run_layer], static_cast<T>(run_sum));
+            run_sum = 0.0f;
+        }
+    }
+
+    TMC_HD static int bin(float x, float width, int count) {
+        if (!(x > 0.0f)) {
+            return 0;
+        }
+        const float i = x / width;
+        return i >= static_cast<float>(count) ? count - 1 : static_cast<int>(i);
+    }
+
+    TMC_HD void check(const Photon<float> &p, float w) {
+        const float norm2 = p.ux * p.ux + p.uy * p.uy + p.uz * p.uz;
+        const float dev = m::fabs(norm2 - 1.0f);
+        if (!(w == w) || !(dev <= 1e-5f)) {
+            ++anomalies;
+        }
+    }
+};
+
+template <class T>
+TMC_HD inline void run_photon_r5(const Geometry<float> &geo, uint64_t seed, uint64_t id, int batch,
+                                 const GpuTallyArrays<T> &arrays) {
+    GpuTallyR5<T> tally(arrays, batch, geo.num_layers);
+    RegPhotonRng rng(seed, id);
+    simulate_photon(geo, rng, tally);
+    tally.flush_counters();
+}
+
 // Rung R3: persistent lanes that relaunch.
 //
 // In R0 and R1 a thread runs one photon to its end, so a warp is held up by its longest photon
@@ -206,9 +305,9 @@ TMC_HD inline unsigned long long claim_next(unsigned long long *counter) {
 #endif
 }
 
-template <class T> class PersistentLane {
+template <class T, class Tally, class Rng> class PersistentLaneOf {
   public:
-    TMC_HD PersistentLane(const GpuTallyArrays<T> &arrays, int num_layers)
+    TMC_HD PersistentLaneOf(const GpuTallyArrays<T> &arrays, int num_layers)
         : tally_(arrays, 0, num_layers), p_{}, rng_(0, 0), has_photon_(false) {}
 
     // Advance by at most one step. A lane without a photon first claims photon first + n for the
@@ -221,7 +320,7 @@ template <class T> class PersistentLane {
                 return false;
             }
             tally_.begin_photon(static_cast<int>(plan.batch_of(id)));
-            rng_ = PhotonRng(seed, id);
+            rng_ = Rng(seed, id);
             launch(p_, geo);
             has_photon_ = true;
         }
@@ -234,14 +333,21 @@ template <class T> class PersistentLane {
     }
 
   private:
-    GpuTallyR1<T> tally_;
+    Tally tally_;
     Photon<float> p_;
-    PhotonRng rng_;
+    Rng rng_;
     bool has_photon_;
 };
 
-// Dispatch on the rung number, shared by the kernel and the host emulation. Rung 3 does not go
-// through here: it is not one photon per call (see PersistentLane).
+// Rung R3 and rung R6: the same lane, with R1's array accumulator and generator, or with R5's
+// register-resident ones.
+template <class T> using PersistentLane = PersistentLaneOf<T, GpuTallyR1<T>, PhotonRng>;
+template <class T> using PersistentLaneRegs = PersistentLaneOf<T, GpuTallyR5<T>, RegPhotonRng>;
+
+// Dispatch on the rung number, shared by the kernel and the host emulation for rungs 0 and 1. The
+// other rungs do not go through here: rungs 3 and 6 are not one photon per call (see
+// PersistentLaneOf), and rung 5 has its own kernel so that R0 and R1 stay exactly what their
+// recorded results measured.
 template <class T>
 TMC_HD inline void run_photon(int rung, const Geometry<float> &geo, uint64_t seed, uint64_t id,
                               int batch, const GpuTallyArrays<T> &arrays) {

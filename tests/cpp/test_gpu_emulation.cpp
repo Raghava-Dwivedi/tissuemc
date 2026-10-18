@@ -96,13 +96,13 @@ Emulated emulate(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64
 // which lanes are advanced is round-robin, or pseudo-random when `shuffled`; the real GPU's order
 // is neither, which is the point: the result must not depend on it. `claimed` receives the final
 // value of the shared photon counter.
-template <class T>
+template <class T, template <class> class Lane = PersistentLane>
 Emulated emulate_persistent(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
                             size_t lanes, bool shuffled, unsigned long long *claimed = nullptr) {
     return emulate_with<T>(
         spec, photons, batches,
         [&](const Geometry<float> &geo, const BatchPlan &plan, const GpuTallyArrays<T> &arrays) {
-            std::vector<PersistentLane<T>> pool(lanes, PersistentLane<T>(arrays, geo.num_layers));
+            std::vector<Lane<T>> pool(lanes, Lane<T>(arrays, geo.num_layers));
             std::vector<char> live(lanes, 1);
             size_t remaining = lanes;
             unsigned long long next = 0;
@@ -122,6 +122,18 @@ Emulated emulate_persistent(const RunSpec &spec, uint64_t photons, uint64_t batc
             }
             if (claimed != nullptr) {
                 *claimed = next;
+            }
+        });
+}
+
+// Rung 5 on the host: one photon at a time, with the register-resident tally and generator.
+template <class T>
+Emulated emulate_r5(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed) {
+    return emulate_with<T>(
+        spec, photons, batches,
+        [&](const Geometry<float> &geo, const BatchPlan &plan, const GpuTallyArrays<T> &arrays) {
+            for (uint64_t id = 0; id < photons; ++id) {
+                run_photon_r5(geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
             }
         });
 }
@@ -315,5 +327,141 @@ TEST_CASE("rung 3 claims every photon once and each lane stops after one failed 
         CHECK(claimed == c.photons + c.lanes);
         const Emulated r1 = emulate<double>(spec, c.photons, c.batches, 3, 1);
         CHECK(r3.events == r1.events);
+    }
+}
+
+namespace {
+
+RunSpec bench_tissue() {
+    const std::string dir = TISSUEMC_CONFIG_DIR;
+    return parse_mci_file(dir + "/bench/tissue_g09.mci").at(0);
+}
+
+} // namespace
+
+TEST_CASE("rung 5's accumulator publishes a partial sum at every layer change") {
+    // The one new piece of logic in rung 5: absorbed weight is summed in a register for the layer
+    // the packet is in, and published when it moves to another layer and when it ends. Layers 0, 1,
+    // 0 again, then end: layer 0 must receive both its partial sums.
+    const RunSpec spec = v3();
+    const Geometry<float> geo = make_geometry<float>(spec);
+    const size_t layers = static_cast<size_t>(geo.num_layers);
+    REQUIRE(layers >= 2);
+    std::vector<double> rd(1), tt(1), absorbed(layers), az(static_cast<size_t>(geo.nz)),
+        rr(static_cast<size_t>(geo.nr));
+    std::vector<unsigned long long> events(1), anomalies(1);
+    GpuTallyArrays<double> arrays{rd.data(), tt.data(),     absorbed.data(), az.data(),
+                                  rr.data(), events.data(), anomalies.data()};
+    GpuTallyR5<double> tally(arrays, 0, geo.num_layers);
+    Photon<float> p{};
+    p.ux = 0.0f;
+    p.uy = 0.0f;
+    p.uz = 1.0f;
+    p.z = 0.01f;
+    const float w0a = 0.25f, w0b = 0.125f, w1 = 0.5f, w0c = 0.0625f;
+    p.layer = 0;
+    tally.score_absorption(p, geo, w0a);
+    tally.score_absorption(p, geo, w0b);
+    p.layer = 1;
+    tally.score_absorption(p, geo, w1);
+    p.layer = 0;
+    tally.score_absorption(p, geo, w0c);
+    CHECK(absorbed[0] == 0.375); // layer 0's first partial sum was published at the move to layer 1
+    CHECK(absorbed[1] == 0.5);   // layer 1's, at the move back to layer 0
+    tally.flush_counters();
+    CHECK(absorbed[0] == 0.375 + 0.0625); // the last partial sum, at the end
+    CHECK(absorbed[1] == 0.5);
+    CHECK(events[0] == 4);
+    CHECK(anomalies[0] == 0);
+    // A new photon on the same lane starts clean.
+    tally.begin_photon(0);
+    tally.flush_counters();
+    CHECK(absorbed[0] == 0.375 + 0.0625);
+    CHECK(events[0] == 4);
+}
+
+TEST_CASE("rung 5 matches rung 1 where it should and the CPU engine where it can") {
+    // Same photons, same random numbers, same transport: events are identical, and so are R_d, T_t
+    // and the depth profile, which are scored exactly as in rung 1. Absorbed weight is published in
+    // partial sums instead of one sum per layer, so it differs from the CPU's compensated double by
+    // float rounding of at most a photon's weight: the bound is the one used for rung 1.
+    const RunSpec spec = v3();
+    const uint64_t photons = 40'000, batches = 8;
+    const Emulated r1 = emulate<double>(spec, photons, batches, 11, 1);
+    const Emulated r5 = emulate_r5<double>(spec, photons, batches, 11);
+    const RunResult cpu = cpu_float32(spec, photons, batches, 11);
+    const size_t layers = spec.layers.size();
+    CHECK(r5.events == r1.events);
+    CHECK(r5.rd == r1.rd);
+    CHECK(r5.tt == r1.tt);
+    CHECK(r5.az == r1.az);
+    for (uint64_t b = 0; b < batches; ++b) {
+        CAPTURE(b);
+        CHECK(r5.events[b] == cpu.batches[b].events);
+        CHECK(r5.anomalies[b] == 0);
+        for (size_t l = 0; l < layers; ++l) {
+            const double expected = cpu.batches[b].absorbed[l];
+            CHECK(std::fabs(r5.absorbed[b * layers + l] - expected) < 1e-6 * expected);
+        }
+    }
+}
+
+TEST_CASE("rung 5 on the single-layer benchmark tissue") {
+    // No layer changes except the exit: the accumulator publishes once per photon.
+    const RunSpec spec = bench_tissue();
+    const uint64_t photons = 2'000, batches = 4;
+    const Emulated r5 = emulate_r5<double>(spec, photons, batches, 5);
+    const RunResult cpu = cpu_float32(spec, photons, batches, 5);
+    for (uint64_t b = 0; b < batches; ++b) {
+        CAPTURE(b);
+        CHECK(r5.events[b] == cpu.batches[b].events);
+        CHECK(r5.anomalies[b] == 0);
+        CHECK(std::fabs(r5.rd[b] - cpu.batches[b].rd) < 1e-9 * cpu.batches[b].rd);
+        const double expected = cpu.batches[b].absorbed[0];
+        CHECK(std::fabs(r5.absorbed[b] - expected) < 1e-6 * expected);
+    }
+}
+
+TEST_CASE("rung 6 with a single lane is rung 5, bit for bit") {
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r5 = emulate_r5<double>(spec, photons, batches, 11);
+    const Emulated r6 =
+        emulate_persistent<double, PersistentLaneRegs>(spec, photons, batches, 11, 1, false);
+    CHECK(r6.events == r5.events);
+    CHECK(r6.anomalies == r5.anomalies);
+    CHECK(r6.rd == r5.rd);
+    CHECK(r6.tt == r5.tt);
+    CHECK(r6.absorbed == r5.absorbed);
+    CHECK(r6.az == r5.az);
+}
+
+TEST_CASE("rung 6 gives the same per-batch results whatever the lanes' interleaving") {
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r5 = emulate_r5<double>(spec, photons, batches, 11);
+    const size_t layers = spec.layers.size();
+    struct Case {
+        size_t lanes;
+        bool shuffled;
+    };
+    for (const Case c : {Case{7, false}, Case{64, false}, Case{37, true}, Case{500, true}}) {
+        CAPTURE(c.lanes);
+        CAPTURE(c.shuffled);
+        unsigned long long claimed = 0;
+        const Emulated r6 = emulate_persistent<double, PersistentLaneRegs>(
+            spec, photons, batches, 11, c.lanes, c.shuffled, &claimed);
+        CHECK(claimed == photons + c.lanes); // every photon claimed once, every lane stops once
+        for (uint64_t b = 0; b < batches; ++b) {
+            CAPTURE(b);
+            CHECK(r6.events[b] == r5.events[b]);
+            CHECK(r6.anomalies[b] == 0);
+            CHECK(std::fabs(r6.rd[b] - r5.rd[b]) < 1e-12 * r5.rd[b]);
+            CHECK(std::fabs(r6.tt[b] - r5.tt[b]) < 1e-12 * r5.tt[b]);
+            for (size_t l = 0; l < layers; ++l) {
+                const double expected = r5.absorbed[b * layers + l];
+                CHECK(std::fabs(r6.absorbed[b * layers + l] - expected) < 1e-12 * expected);
+            }
+        }
     }
 }

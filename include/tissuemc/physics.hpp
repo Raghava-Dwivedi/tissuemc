@@ -5,7 +5,9 @@
 // Tissues in Standard C" (1992), chapters 3-5. Section numbers in comments refer to that manual.
 //
 // Every function is TMC_HD and templated on the floating-point type, so the float64 CPU engine and
-// the float32 GPU engine execute the same code. Scoring is delegated to a Tally type supplied by
+// the float32 GPU engine execute the same code. The random generator is a template parameter too:
+// PhotonRng everywhere except the GPU rungs R5 and R6, which use the register-friendly
+// RegPhotonRng. Scoring is delegated to a Tally type supplied by
 // each engine (see score_* calls), because CPU and GPU accumulate results differently.
 
 #include "tissuemc/geometry.hpp"
@@ -96,7 +98,7 @@ template <class Real> TMC_HD Real fresnel(Real n1, Real n2, Real ca1, Real &ca2)
 }
 
 // Sample cos(theta) from the Henyey-Greenstein phase function by inverting its CDF (MCML 3.4).
-template <class Real> TMC_HD Real sample_hg_cos(Real g, PhotonRng &rng) {
+template <class Real, class Rng> TMC_HD Real sample_hg_cos(Real g, Rng &rng) {
     const Real xi = uniform<Real>(rng);
     if (g == Real(0)) {
         return Real(2) * xi - Real(1);
@@ -111,7 +113,7 @@ template <class Real> TMC_HD Real sample_hg_cos(Real g, PhotonRng &rng) {
 }
 
 // Rotate the direction by polar angle theta (cos given) and a uniform azimuth (MCML 3.4).
-template <class Real> TMC_HD void spin(Photon<Real> &p, Real g, PhotonRng &rng) {
+template <class Real, class Rng> TMC_HD void spin(Photon<Real> &p, Real g, Rng &rng) {
     using C = Constants<Real>;
     const Real cost = sample_hg_cos(g, rng);
     Real sint = Real(1) - cost * cost;
@@ -143,8 +145,8 @@ template <class Real> TMC_HD void spin(Photon<Real> &p, Real g, PhotonRng &rng) 
 
 // Choose the next step. A fresh step is s = -ln(xi) / mu_t; a step interrupted at a boundary
 // resumes with its dimensionless remainder in the new layer (MCML 3.2, 3.9).
-template <class Real>
-TMC_HD void step_size(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &rng) {
+template <class Real, class Rng>
+TMC_HD void step_size(Photon<Real> &p, const Geometry<Real> &geo, Rng &rng) {
     const Layer<Real> &L = geo.layers[p.layer];
     const Real mut = L.mua + L.mus;
     if (p.sleft == Real(0)) {
@@ -193,8 +195,8 @@ TMC_HD void drop(Photon<Real> &p, const Geometry<Real> &geo, Tally &tally) {
 // At a boundary: reflect with the Fresnel probability, otherwise transmit into the neighbouring
 // layer or out of the stack, where the weight is scored as reflectance (top) or transmittance
 // (bottom) and the packet ends. MCML's default non-partial scheme (MCML 3.6-3.7).
-template <class Real, class Tally>
-TMC_HD void cross_or_not(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &rng, Tally &tally) {
+template <class Real, class Tally, class Rng>
+TMC_HD void cross_or_not(Photon<Real> &p, const Geometry<Real> &geo, Rng &rng, Tally &tally) {
     const Layer<Real> &L = geo.layers[p.layer];
     const Real ni = L.n;
     Real uz1 = Real(0);
@@ -245,7 +247,7 @@ TMC_HD void cross_or_not(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &
 
 // Russian roulette for low-weight packets: survive with probability CHANCE and weight / CHANCE,
 // otherwise die. Unbiased: the expected weight is unchanged (MCML 3.8).
-template <class Real> TMC_HD void roulette(Photon<Real> &p, PhotonRng &rng) {
+template <class Real, class Rng> TMC_HD void roulette(Photon<Real> &p, Rng &rng) {
     using C = Constants<Real>;
     if (p.w == Real(0)) {
         p.dead = true;
@@ -258,8 +260,8 @@ template <class Real> TMC_HD void roulette(Photon<Real> &p, PhotonRng &rng) {
 
 // One hop-drop-spin cycle plus roulette (MCML HopDropSpin). Exposed separately from
 // simulate_photon so a GPU thread can interleave packets (photon relaunch).
-template <class Real, class Tally>
-TMC_HD void step_once(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &rng, Tally &tally) {
+template <class Real, class Tally, class Rng>
+TMC_HD void step_once(Photon<Real> &p, const Geometry<Real> &geo, Rng &rng, Tally &tally) {
     step_size(p, geo, rng);
     if (hit_boundary(p, geo)) {
         hop(p);
@@ -275,8 +277,8 @@ TMC_HD void step_once(Photon<Real> &p, const Geometry<Real> &geo, PhotonRng &rng
 }
 
 // Transport one packet from launch until it leaves the stack or loses roulette.
-template <class Real, class Tally>
-TMC_HD void simulate_photon(const Geometry<Real> &geo, PhotonRng &rng, Tally &tally) {
+template <class Real, class Tally, class Rng>
+TMC_HD void simulate_photon(const Geometry<Real> &geo, Rng &rng, Tally &tally) {
     Photon<Real> p;
     launch(p, geo);
     while (!p.dead) {

@@ -52,6 +52,30 @@ __global__ void persistent_kernel(Geometry<float> geo, BatchPlan plan, uint64_t 
     }
 }
 
+// Rung 5: one photon per thread, exactly as rungs 0 and 1, but with the generator and the per-layer
+// accumulator in registers (see GpuTallyR5). A kernel of its own, so that photon_kernel, which
+// rungs 0 and 1 share, stays what their recorded results measured.
+template <class T>
+__global__ void regs_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed, uint64_t first,
+                            uint64_t count, GpuTallyArrays<T> arrays) {
+    const uint64_t i = static_cast<uint64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+    if (i >= count) {
+        return;
+    }
+    const uint64_t id = first + i;
+    run_photon_r5(geo, seed, id, static_cast<int>(plan.batch_of(id)), arrays);
+}
+
+// Rung 6: rung 3's persistent lanes, with rung 5's register-resident state.
+template <class T>
+__global__ void persistent_regs_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed,
+                                       uint64_t first, uint64_t end, GpuTallyArrays<T> arrays,
+                                       unsigned long long *next) {
+    PersistentLaneRegs<T> lane(arrays, geo.num_layers);
+    while (lane.advance(geo, seed, plan, first, end, next)) {
+    }
+}
+
 template <class T> class DeviceArray {
   public:
     explicit DeviceArray(size_t count) : count_(count) {
@@ -100,25 +124,39 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
     CUDA_CHECK(cudaEventRecord(start));
-    if (opt.rung == 3) {
+    if (opt.rung == 3 || opt.rung == 6) {
         // As many blocks as can be resident at once, so every lane stays busy until the photons
         // run out; never more lanes than photons.
         int per_sm = 0;
-        CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, persistent_kernel<T>,
-                                                                 kBlockSize, 0));
+        if (opt.rung == 3) {
+            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, persistent_kernel<T>,
+                                                                     kBlockSize, 0));
+        } else {
+            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &per_sm, persistent_regs_kernel<T>, kBlockSize, 0));
+        }
         const uint64_t resident = static_cast<uint64_t>(std::max(per_sm, 1)) *
                                   static_cast<uint64_t>(prop.multiProcessorCount);
         const uint64_t needed = (run.photons + kBlockSize - 1) / kBlockSize;
         const unsigned blocks = static_cast<unsigned>(std::min(resident, needed));
-        persistent_kernel<T>
-            <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
+        if (opt.rung == 3) {
+            persistent_kernel<T>
+                <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
+        } else {
+            persistent_regs_kernel<T>
+                <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
+        }
         CUDA_CHECK(cudaGetLastError());
     } else {
         for (uint64_t first = 0; first < run.photons; first += kPhotonsPerLaunch) {
             const uint64_t count = std::min(kPhotonsPerLaunch, run.photons - first);
             const unsigned blocks = static_cast<unsigned>((count + kBlockSize - 1) / kBlockSize);
-            photon_kernel<T>
-                <<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays, opt.rung);
+            if (opt.rung == 5) {
+                regs_kernel<T><<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays);
+            } else {
+                photon_kernel<T>
+                    <<<blocks, kBlockSize>>>(geo, plan, opt.seed, first, count, arrays, opt.rung);
+            }
             CUDA_CHECK(cudaGetLastError());
         }
     }
@@ -185,8 +223,8 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     if (static_cast<uint64_t>(opt.batches) > run.photons) {
         throw ConfigError("batches cannot exceed the number of photons");
     }
-    if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3) {
-        throw ConfigError("rung must be 0, 1 or 3 (rung 2 is not built yet)");
+    if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3 && opt.rung != 5 && opt.rung != 6) {
+        throw ConfigError("rung must be 0, 1, 3, 5 or 6 (rungs 2 and 4 are not built yet)");
     }
     if (!cuda_available()) {
         throw std::runtime_error("no usable CUDA device found");

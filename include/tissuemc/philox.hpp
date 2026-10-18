@@ -82,6 +82,45 @@ class PhotonRng {
     int idx_;
 };
 
+// The same stream as PhotonRng, laid out for the GPU's registers (rungs R5 and R6). PhotonRng keeps
+// the four words of the current block in an array and reads them at a run-time index, which the
+// compiler places in per-thread local memory. Here the unread words are four scalars that shift
+// down as they are used, so nothing is indexed at run time and the whole generator can stay in
+// registers. The output is word for word the same; tests/cpp/test_philox.cpp checks it. PhotonRng
+// is left as it was so that the earlier rungs remain what their recorded results measured.
+class RegPhotonRng {
+  public:
+    TMC_HD RegPhotonRng(uint64_t seed, uint64_t photon_id)
+        : ctr0_(static_cast<uint32_t>(photon_id)), ctr1_(static_cast<uint32_t>(photon_id >> 32)),
+          ctr2_(0u), k0_(static_cast<uint32_t>(seed)), k1_(static_cast<uint32_t>(seed >> 32)),
+          w0_(0u), w1_(0u), w2_(0u), w3_(0u), left_(0) {}
+
+    TMC_HD uint32_t next_u32() {
+        if (left_ == 0) {
+            const U32x4 block =
+                philox4x32_10(U32x4{{ctr0_, ctr1_, ctr2_, 0u}}, PhiloxKey{{k0_, k1_}});
+            ++ctr2_;
+            w0_ = block.v[0];
+            w1_ = block.v[1];
+            w2_ = block.v[2];
+            w3_ = block.v[3];
+            left_ = 4;
+        }
+        const uint32_t out = w0_;
+        w0_ = w1_;
+        w1_ = w2_;
+        w2_ = w3_;
+        --left_;
+        return out;
+    }
+
+  private:
+    uint32_t ctr0_, ctr1_, ctr2_;
+    uint32_t k0_, k1_;
+    uint32_t w0_, w1_, w2_, w3_;
+    int left_;
+};
+
 // Uniform deviate strictly inside (0, 1); never 0 (log is safe) and never 1. Every draw consumes
 // exactly one 32-bit word in both precisions, so a float engine and a double engine given the same
 // (seed, photon id) see the same sequence of draws.
@@ -96,7 +135,7 @@ template <> TMC_HD inline float to_unit_open<float>(uint32_t x) {
     return (static_cast<float>(x >> 9) + 0.5f) * 0x1p-23f;
 }
 
-template <class Real> TMC_HD inline Real uniform(PhotonRng &rng) {
+template <class Real, class Rng> TMC_HD inline Real uniform(Rng &rng) {
     return to_unit_open<Real>(rng.next_u32());
 }
 

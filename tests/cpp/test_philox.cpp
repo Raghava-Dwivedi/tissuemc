@@ -7,6 +7,7 @@
 
 using tissuemc::PhiloxKey;
 using tissuemc::PhotonRng;
+using tissuemc::RegPhotonRng;
 using tissuemc::U32x4;
 
 namespace {
@@ -85,4 +86,35 @@ TEST_CASE("uniform deviates have mean 1/2 and variance 1/12") {
     // Standard error of the mean is sqrt(1/12 / n) ~ 2.9e-4; allow 5 sigma.
     CHECK(std::fabs(mean - 0.5) < 1.5e-3);
     CHECK(std::fabs(var - 1.0 / 12.0) < 5e-4);
+}
+
+TEST_CASE("the register-friendly generator is word for word the same stream") {
+    // RegPhotonRng exists so that the GPU keeps the generator in registers; it must not change
+    // the numbers. Ids and seeds above 2^32 exercise the high counter and key words, and 100,000
+    // draws cross 25,000 block boundaries.
+    struct Case {
+        uint64_t seed, id;
+    };
+    for (const Case c :
+         {Case{0, 0}, Case{1, 7}, Case{42, 1'000'003}, Case{0xdeadbeefcafef00dull, 5},
+          Case{7, 0x1'0000'0005ull}, Case{0xffffffffffffffffull, 0xffffffffffffffffull}}) {
+        CAPTURE(c.seed);
+        CAPTURE(c.id);
+        PhotonRng a(c.seed, c.id);
+        RegPhotonRng b(c.seed, c.id);
+        bool same = true;
+        for (int i = 0; i < 100'000 && same; ++i) {
+            same = (a.next_u32() == b.next_u32());
+        }
+        CHECK(same);
+    }
+}
+
+TEST_CASE("uniform deviates from the two generators are identical in both precisions") {
+    PhotonRng a(9, 3);
+    RegPhotonRng b(9, 3);
+    for (int i = 0; i < 1000; ++i) {
+        CHECK(tissuemc::uniform<double>(a) == tissuemc::uniform<double>(b));
+        CHECK(tissuemc::uniform<float>(a) == tissuemc::uniform<float>(b));
+    }
 }

@@ -22,7 +22,8 @@ struct EngineOptions {
     uint64_t photons = 0; // if nonzero, overrides the photon count in the run description
     Precision precision = Precision::Float64;
     TallyPrecision gpu_tally = TallyPrecision::Float64; // used by the GPU engine only
-    int rung = 0; // GPU rung: 0 = naive baseline, 1 = fewer atomics, 3 = photon relaunch
+    int rung =
+        0; // GPU rung: 0 naive, 1 fewer atomics, 3 relaunch, 5 registers, 6 relaunch + registers
 };
 
 // Photon i always uses the random stream keyed by (seed, i), so the result depends only on
