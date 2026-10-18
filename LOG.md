@@ -88,7 +88,16 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 
 **Before any GPU run, from the continuous-integration build only:** the compiler's stack frame fell from 224 and 272 bytes to 32, and the static count of local-memory instructions from 149 and 197 to 10 (CUDA 12.0 toolkit; static, so it shows what was emitted, not what runs).
 
-**Result:** not run on a GPU yet.
+**Result:**
+- Validation on the GPU: 24 of 24 checks pass on rung 5 and 24 of 24 on rung 6.
+- Same photons through the CPU (float32), 2×10⁶ photons: both pass. R_d, T_t and event-count gaps are identical to R1's to every printed digit; absorbed weight total gap 0.0034 (R5) and 0.0034 (R6) standard errors, worst per-batch 4.0e-05 and 4.0e-05.
+- Throughput, same session, 4×10⁶ photons, median kernel time of 5 repeats: R1 10.060 s (615.2 million events/s), R3 10.764 s (575.0), **R5 10.059 s (615.3)**, **R6 10.052 s (615.7)**, R1 again 10.486 s (590.2). R5 is -0.01% and R6 -0.08% against the first R1; R3 is +7.0% and R1 again +4.2% (the GPU's own drift). The five repeats span 0.02% (R1), 0.09% (R5) and 0.02% (R6), and 2.5% for R3.
+- The notebook's profiling cells (every counter for R3 and R6) were not part of what was pasted: no counters yet for R5 or R6.
 
-**Did the data support the diagnosis?** Not run yet.
+**Did the data support the diagnosis?** In part:
+- Supported: R3's slowdown was local memory. R6 is R3 with its state in registers and is 7.1% faster than R3, equal to R1.
+- Not supported as a statement about the kernel: local memory was not what limited R1. With it removed (R5) the time did not change (-0.01%). The diagnosis explained R3's *extra* wait; I then described it as the limit on the kernel, which was too broad.
+- Measured: R1, R5 and R6 take the same time to 0.1%, with repeats that agree to 0.02 to 0.09%, although they differ in local-memory use, in warp instructions issued and in relaunch. Something they share sets the run time. It is not identified.
+- Hypotheses, untested: the per-event atomic add into the depth profile (about 6×10⁹ per run, the same in all three; hot bins near the surface may serialize at L2, which an average L2 busy percentage does not show); other per-event work that is identical in every kernel. This reopens a question the R1 entry closed too early: that entry read atomics as not the main limit because L2 was only about 12% busy, which measures bandwidth, not contention on one address.
+- Next: read R6's stall reasons and its atomic and L2 counters (the digest cell of the same notebook, or the saved `.ncu.csv` files if the session still has them); then decide between an ablation that removes the depth-profile atomic and the deferred rung R2 (shared-memory histograms), which tests the same thing and would also be the fix.
 

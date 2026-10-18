@@ -2,7 +2,7 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, are written and tested on the host but have not run on a GPU, so no result is claimed for them yet. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, took 10.06 s and 10.05 s, the same as R1's 10.06 s: registers removed R3's loss but did not make the kernel faster than R1, so what limits R1 is not yet identified. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
@@ -182,7 +182,7 @@ R3 keeps R1's scoring and changes how threads are used: a fixed set of resident 
 | L2 cache throughput | 12.39 % | 11.65 % |
 | Achieved occupancy | 86.97 % | 99.78 % |
 
-**What the counters say** (my reading, not something the profiler states): R3 did what it was built to do, raising the active lanes per warp from 4.74 to 21.61 of 32 (15% to 68%). Run time did not follow. Each warp now waited 98 cycles between issued instructions instead of 20 (4.9×), which roughly cancels the 4.6× more lanes working in each instruction; under the profiler's locked clocks the two kernels took 8,924,395,584 and 8,962,183,072 ns, within 0.4% of each other (that run uses half the photons at lower, locked clocks, so it is not a second timing of the benchmark). Compute throughput fell from 34.80 % to 8.12 %, and memory and L2 stay under 17%. So lane utilization, memory bandwidth and atomic throughput are each not the main limit on run time (the atomics matter a little: halving them gave R1's 10%). **What is the main limit is not identified.** This also overturns my reading after R1 that divergence was the main loss: divergence was real, and R3 removed most of it, but removing it did not make the kernel faster. The diagnostic run below shows why each warp waits so long.
+**What the counters say** (my reading, not something the profiler states): R3 did what it was built to do, raising the active lanes per warp from 4.74 to 21.61 of 32 (15% to 68%). Run time did not follow. Each warp now waited 98 cycles between issued instructions instead of 20 (4.9×), which roughly cancels the 4.6× more lanes working in each instruction; under the profiler's locked clocks the two kernels took 8,924,395,584 and 8,962,183,072 ns, within 0.4% of each other (that run uses half the photons at lower, locked clocks, so it is not a second timing of the benchmark). Compute throughput fell from 34.80 % to 8.12 %, and memory and L2 stay under 17%. So lane utilization, memory bandwidth and atomic throughput did not explain R3's loss (the atomics matter a little: halving them gave R1's 10%). This also overturns my reading after R1 that divergence was the main loss: divergence was real, and R3 removed most of it, but removing it did not make the kernel faster. The diagnostic run below shows why each warp waits so long.
 
 ### Why each R3 warp waits so long
 
@@ -216,7 +216,32 @@ The diagnostic run collected every Nsight Compute counter for R1 and R3 on 500,0
 - **R3 does not reduce that traffic, and it misses the L1 cache far more.** R3 executes 0.28× the warp instructions of R1, but the same number of local loads and a similar volume of local sectors, so local memory is 3.7× as large a share of what each warp does. The L1 hit rate for local loads fell from 89.95% to 29.02%, so about 10× as many local-load sectors went on to L2 (0.36 to 3.60 billion). A miss waits for L2 instead of L1, which is a long scoreboard stall.
 - **The earlier assumption that R3 does the same work per photon holds to about 7%.** Warp instructions times active lanes gives 1.07× the thread-instructions for R3, and instructions times wait per instruction divided by resident warps predicts the two kernels' run times within 2% of each other, which matches the profiler's near-equal durations at 2×10⁶ photons.
 
-What the counters do **not** say: which variables live in local memory (I suspect the random generator's four-word buffer, which is indexed at run time, and the per-layer accumulator array that R1 and R3 index by layer; that is from reading the code, not from a measurement), or why the L1 hit rate fell. Rungs R5 and R6 ([`docs/rungs/R5.md`](docs/rungs/R5.md)) test the first of these directly.
+What the counters do **not** say: which variables live in local memory (I suspect the random generator's four-word buffer, which is indexed at run time, and the per-layer accumulator array that R1 and R3 index by layer; that is from reading the code, not from a measurement), or why the L1 hit rate fell. Rungs R5 and R6 ([`docs/rungs/R5.md`](docs/rungs/R5.md), results in the next section) tested the first of these directly.
+
+## GPU, rungs R5 and R6 (state in registers)
+
+R5 (one photon per thread) and R6 (persistent lanes that relaunch) keep the random generator's buffer and the per-layer accumulator in registers instead of run-time-indexed arrays, which the compiler had placed in per-thread local memory. With R1 and R3 they form a two-by-two comparison: arrays against registers, one photon per thread against relaunch. Design: [`docs/rungs/R5.md`](docs/rungs/R5.md). The record is [`results/gpu-r5-r6-summary.json`](results/gpu-r5-r6-summary.json), the pasted summary of [`notebooks/colab_gpu_r5.ipynb`](notebooks/colab_gpu_r5.ipynb); its profiling output was not pasted, so there are no counters for these rungs yet. [`LOG.md`](LOG.md) is measurement-only, so no prediction was recorded.
+
+- **Validation:** all 24 checks pass on rung 5 and on rung 6.
+- **Agreement with the CPU on identical photons** (2×10⁶ photons): both pass. R_d, T_t and event-count gaps are identical to R1's to every printed digit, as expected from the same arithmetic; absorbed weight, scored differently, differs from the CPU by 0.0034 standard errors in total (R5) and 0.0034 (R6), with a worst per-batch gap of 4.0e-05 and 4.0e-05 (limits 0.25 and 5×10⁻³).
+- **Throughput**, same session, 4×10⁶ photons, median kernel time of 5 repeats:
+
+| Run | Median kernel time | Million events/s |
+|---|---|---|
+| R1 (first) | 10.060 s | 615.2 |
+| R3 | 10.764 s | 575.0 |
+| **R5** | **10.059 s** | **615.3** |
+| **R6** | **10.052 s** | **615.7** |
+| R1 (again) | 10.486 s | 590.2 |
+
+**Keeping the state in registers did not make the kernel faster, and it undid R3's loss.** R5 took 10.059 s against R1's 10.060 (-0.01%), and R6 took 10.052 s (-0.08%). R3 was 7.0% slower than R1, and R6, which is R3 with its state in registers, is 7.1% faster than R3. R1 repeated at the end of the session was 4.2% slower than at the start, so the GPU itself drifts by about that much; R5 and R6 ran in the same stretch as the first R1, and the five repeats of R1, R5 and R6 each span only 0.02%, 0.09% and 0.02%, so the three equalities are tighter than the drift.
+
+**What this means** (my reading):
+
+- **R3's slowdown was caused by local memory, as the diagnostic run indicated.** Moving its state into registers (R6) brings it back to R1's time.
+- **Local memory was not what limited R1.** With it gone (R5), the time did not move. My earlier statement that local-memory latency was the limit on this kernel was true of R3's *extra* wait and wrong as a statement about the kernel.
+- **Something R1, R5 and R6 share sets their run time.** They differ in local-memory use, in how many warp instructions they issue (R6 issues far fewer than R1, from the R3 counters) and in whether they relaunch, yet they take the same time to within 0.1%. What they share is not identified.
+- **Candidates, untested:** the per-event atomic add into the depth profile (about 6×10⁹ per run, the same in all three; the hot bins near the surface receive many of them, and a profile's average L2 busy percentage would not show one hot address serializing); other per-event work that is the same in every kernel. R1's reading that atomics were not the limit rested on L2 being only about 12% busy, which does not measure that, so the question is open again. The profiling cells of this notebook measure R6's stall reasons and atomic counters; they will say which.
 
 ## Development process
 

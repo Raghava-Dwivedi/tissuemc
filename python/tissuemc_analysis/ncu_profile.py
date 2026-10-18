@@ -206,6 +206,15 @@ DIGEST_GROUPS = [
         12,
     ),
     (
+        "L2, atomics and SM balance",
+        r"^lts__throughput\.(avg|max)\.pct_of_peak_sustained_elapsed$"
+        r"|^lts__d_atomic_input_cycles_active\.(avg|max)\.pct_of_peak_sustained_elapsed$"
+        r"|^lts__t_(requests|sectors)_srcunit_tex_op_atom_dot_alu\.sum$"
+        r"|^lts__t_sector_hit_rate\.pct$|^gpu__time_duration\.sum$"
+        r"|^sm__cycles_active\.(avg|max|min)$|^dram__bytes_(read|write)\.sum$",
+        12,
+    ),
+    (
         "Launch and occupancy",
         r"^launch__(registers_per_thread|thread_count|grid_size|block_size|occupancy_limit_.*)$"
         r"|^sm__warps_active\.avg\.pct_of_peak_sustained_active$",

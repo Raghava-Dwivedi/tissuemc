@@ -1,0 +1,155 @@
+{
+ "provenance": "The final-cell summary of notebooks/colab_gpu_r5.ipynb, run by the repository owner on a free Colab T4 at the commit named inside (the run date was not recorded), and pasted in unchanged. The per-file JSON results written in the session were not saved. The notebook's profiling cells (every Nsight Compute counter for R3 and R6, and their digest) are not part of this record: their output was not pasted.",
+ "rung": "5 and 6",
+ "prediction_recorded_before_run": false,
+ "summary": {
+  "commit": "fdaf5f534016011f73b778b8fa6d42ab6ec1fb9d",
+  "device": "Tesla T4 (sm_75)",
+  "validation_r5": {
+   "checks": 24,
+   "passed": 24,
+   "failed": []
+  },
+  "validation_r6": {
+   "checks": 24,
+   "passed": 24,
+   "failed": []
+  },
+  "cross_engine_r5": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033671515250452283,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.952066868083955e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "cross_engine_r6": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033671515250453476,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.952066868140746e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ]
+   }
+  },
+  "benchmark": {
+   "r1_first": {
+    "median_kernel_s": 10.06,
+    "kernel_seconds": [
+     10.06,
+     10.06,
+     10.06,
+     10.058,
+     10.059
+    ],
+    "million_events_per_s": 615.2,
+    "validated_first": true
+   },
+   "r3": {
+    "median_kernel_s": 10.764,
+    "kernel_seconds": [
+     10.606,
+     10.695,
+     10.764,
+     10.871,
+     10.861
+    ],
+    "million_events_per_s": 575.0,
+    "validated_first": true
+   },
+   "r5": {
+    "median_kernel_s": 10.059,
+    "kernel_seconds": [
+     10.059,
+     10.067,
+     10.061,
+     10.058,
+     10.058
+    ],
+    "million_events_per_s": 615.3,
+    "validated_first": true
+   },
+   "r6": {
+    "median_kernel_s": 10.052,
+    "kernel_seconds": [
+     10.051,
+     10.052,
+     10.052,
+     10.05,
+     10.052
+    ],
+    "million_events_per_s": 615.7,
+    "validated_first": true
+   },
+   "r1_again": {
+    "median_kernel_s": 10.486,
+    "kernel_seconds": [
+     10.588,
+     10.553,
+     10.486,
+     10.477,
+     10.47
+    ],
+    "million_events_per_s": 590.2,
+    "validated_first": true
+   }
+  }
+ }
+}

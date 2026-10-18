@@ -348,3 +348,90 @@ def test_diagnosis_claims_follow_from_the_saved_digest():
     warps = tuple(v / 100 for v in g("sm__warps_active.avg.pct_of_peak_sustained_active"))
     cycles = (inst[1] * lat[1] / warps[1]) / (inst[0] * lat[0] / warps[0])
     assert abs(cycles - 1) < 0.02
+
+
+def test_gpu_r5_r6_readme_numbers_match_the_committed_summary():
+    data = json.loads((ROOT / "results" / "gpu-r5-r6-summary.json").read_text())
+    assert data["prediction_recorded_before_run"] is False
+    s = data["summary"]
+    for key in ("validation_r5", "validation_r6"):
+        assert s[key]["checks"] == 24 and s[key]["failed"] == []
+    for key in ("cross_engine_r5", "cross_engine_r6"):
+        assert s[key]["agree"] is True
+        assert all(value <= limit for value, limit in s[key]["gaps"].values()), key
+    # "R_d, T_t and event-count gaps are identical to R1's to every printed digit."
+    r1_gaps = json.loads((ROOT / "results" / "gpu-r3-summary.json").read_text())["summary"][
+        "cross_engine_r1"
+    ]["gaps"]
+    for key in ("cross_engine_r5", "cross_engine_r6"):
+        for name in (
+            "rd: total gap / standard error",
+            "rd: worst per-batch relative gap",
+            "tt: total gap / standard error",
+            "tt: worst per-batch relative gap",
+            "events: relative gap",
+        ):
+            assert s[key]["gaps"][name] == r1_gaps[name], (key, name)
+    b = s["benchmark"]
+    assert all(run["validated_first"] for run in b.values())
+    readme = README.replace("**", "")
+    labels = (
+        ("R1 (first)", "r1_first"),
+        ("R3", "r3"),
+        ("R5", "r5"),
+        ("R6", "r6"),
+        ("R1 (again)", "r1_again"),
+    )
+    for label, key in labels:
+        row = f"| {label} | {b[key]['median_kernel_s']:.3f} s | {b[key]['million_events_per_s']} |"
+        assert row in readme, row
+    t = {k: v["median_kernel_s"] for k, v in b.items()}
+    pct = lambda a, base: 100 * (a / base - 1)  # noqa: E731
+    # The claims in the text: R5 and R6 equal R1 to 0.1%, R3 slower, R6 faster than R3.
+    assert abs(pct(t["r5"], t["r1_first"])) < 0.1 and abs(pct(t["r6"], t["r1_first"])) < 0.1
+    assert f"R3 was {pct(t['r3'], t['r1_first']):.1f}% slower than R1" in readme
+    assert f"is {pct(t['r3'], t['r6']):.1f}% faster than R3" in readme
+    assert f"{pct(t['r1_again'], t['r1_first']):.1f}% slower than at the start" in readme
+    for key in ("r1_first", "r5", "r6"):  # "five repeats ... span only 0.02%, 0.09% and 0.02%"
+        ks = b[key]["kernel_seconds"]
+        assert 100 * (max(ks) / min(ks) - 1) < 0.1, key
+    spans = [
+        100 * (max(b[k]["kernel_seconds"]) / min(b[k]["kernel_seconds"]) - 1)
+        for k in ("r1_first", "r5", "r6")
+    ]
+    assert f"{spans[0]:.2f}%, {spans[1]:.2f}% and {spans[2]:.2f}%" in readme
+    ak, pk = "absorbed: total gap / standard error", "absorbed: worst per-batch relative gap"
+    g5, g6 = s["cross_engine_r5"]["gaps"], s["cross_engine_r6"]["gaps"]
+    assert f"{g5[ak][0]:.4f} standard errors in total (R5) and {g6[ak][0]:.4f} (R6)" in readme
+    assert f"{g5[pk][0]:.1e} and {g6[pk][0]:.1e}" in readme
+
+
+def test_gpu_r5_r6_log_matches_the_committed_summary():
+    log = (ROOT / "LOG.md").read_text().replace("**", "")
+    b = json.loads((ROOT / "results" / "gpu-r5-r6-summary.json").read_text())["summary"][
+        "benchmark"
+    ]
+    for label, key in (
+        ("R1", "r1_first"),
+        ("R3", "r3"),
+        ("R5", "r5"),
+        ("R6", "r6"),
+        ("R1 again", "r1_again"),
+    ):
+        run = b[key]
+        assert f"{label} {run['median_kernel_s']:.3f} s ({run['million_events_per_s']}" in log, (
+            label
+        )
+    assert "Not supported as a statement about the kernel" in log
+    assert "reopens a question the R1 entry closed too early" in log
+    assert "no counters yet for R5 or R6" in log
+
+
+def test_the_docs_do_not_claim_a_limiter_the_data_do_not_support():
+    """Local memory slowed R3 but did not limit R1 (R5); the text must not say otherwise."""
+    design = (ROOT / "docs" / "DESIGN.md").read_text()
+    for text in (README, design):
+        assert "The limit on this kernel is the latency of per-thread local memory" not in text
+        assert "are each not the main limit on run time" not in text
+    assert "After R5 and R6" in design and "do not identify" in design
+    assert "not yet identified" in README  # the floor R1, R5 and R6 share
