@@ -37,3 +37,18 @@ def test_cells_do_not_import_the_package_without_putting_it_on_the_path(path):
             assert any("sys.path.insert" in ln for ln in lines[:i]), (
                 f"{path.name}: a cell imports tissuemc_analysis without sys.path.insert first"
             )
+
+
+def test_the_diagnostic_notebook_cannot_run_its_long_steps_after_a_failed_check():
+    """Run all must not spend minutes on a run that the quick check showed is broken."""
+    nb = json.loads((ROOT / "notebooks" / "colab_gpu_diagnose.ipynb").read_text())
+    sources = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    check = next(s for s in sources if "--photons 20000" in s)
+    assert ".smoke_ok" in check and "&&" in check  # the marker is written only if everything passed
+    long_steps = [s for s in sources if "--photons 500000" in s]
+    assert len(long_steps) == 2
+    for s in long_steps:
+        assert "[ -f results/.smoke_ok ]" in s and "SKIPPED" in s
+        assert "--reuse-csv" in s  # a run that already collected is not repeated
+    clone = next(s for s in sources if "git clone" in s)
+    assert "/content/tissuemc/.git" in clone  # no second, nested clone on a re-run
