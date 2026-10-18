@@ -76,6 +76,46 @@ __global__ void persistent_regs_kernel(Geometry<float> geo, BatchPlan plan, uint
     }
 }
 
+// Rung 7: rung 6 with the depth and radius profiles privatized in shared memory.
+//
+// Every absorption event adds to the depth profile, and the benchmark's profile has 40 bins, so
+// about 6e9 global atomic adds serialized on a few cache lines and were 92% of rung 6's time. Here
+// each warp keeps its own copy of the two profiles in shared memory, so the adds only contend with
+// the other lanes of the same warp and never leave the multiprocessor; at the end of the kernel
+// one thread per bin sums the block's copies and makes a single global add. The accumulators have
+// the tally's precision T (double by default), because a float total in shared memory would lose
+// small additions just as a global one does. The summation order differs from rung 6's, so the
+// profiles agree to rounding, not bit for bit; the totals and event counts do not change.
+template <class T>
+__global__ void persistent_shared_kernel(Geometry<float> geo, BatchPlan plan, uint64_t seed,
+                                         uint64_t first, uint64_t end, GpuTallyArrays<T> arrays,
+                                         unsigned long long *next) {
+    extern __shared__ unsigned char tmc_shared[];
+    T *copies = reinterpret_cast<T *>(tmc_shared);
+    const int stride = geo.nz + geo.nr; // one warp's copy: depth bins, then radius bins
+    const int warps = blockDim.x / 32;
+    for (int i = threadIdx.x; i < warps * stride; i += blockDim.x) {
+        copies[i] = T(0);
+    }
+    __syncthreads();
+    GpuTallyArrays<T> mine = arrays;
+    mine.az = copies + (threadIdx.x / 32) * stride;
+    mine.rr = mine.az + geo.nz;
+    PersistentLaneRegs<T> lane(mine, geo.num_layers);
+    while (lane.advance(geo, seed, plan, first, end, next)) {
+    }
+    __syncthreads();
+    for (int i = threadIdx.x; i < stride; i += blockDim.x) {
+        T sum = T(0);
+        for (int w = 0; w < warps; ++w) {
+            sum += copies[w * stride + i];
+        }
+        if (sum != T(0)) {
+            atomicAdd(i < geo.nz ? &arrays.az[i] : &arrays.rr[i - geo.nz], sum);
+        }
+    }
+}
+
 // The diagnostic: rung 6 without the depth and radius profile tallies. A kernel of its own, so
 // persistent_regs_kernel stays what the recorded rung 6 results measured.
 template <class T>
@@ -136,13 +176,19 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
     CUDA_CHECK(cudaEventRecord(start));
-    if (opt.rung == 3 || opt.rung == 6) {
+    if (opt.rung == 3 || opt.rung == 6 || opt.rung == 7) {
         // As many blocks as can be resident at once, so every lane stays busy until the photons
         // run out; never more lanes than photons.
         int per_sm = 0;
+        // Rung 7: one copy of the depth and radius profiles per warp, in shared memory.
+        const size_t shared_bytes =
+            static_cast<size_t>(kBlockSize / 32) * static_cast<size_t>(geo.nz + geo.nr) * sizeof(T);
         if (opt.rung == 3) {
             CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, persistent_kernel<T>,
                                                                      kBlockSize, 0));
+        } else if (opt.rung == 7) {
+            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &per_sm, persistent_shared_kernel<T>, kBlockSize, shared_bytes));
         } else if (opt.profiles) {
             CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
                 &per_sm, persistent_regs_kernel<T>, kBlockSize, 0));
@@ -157,6 +203,9 @@ RunResult run_with_tallies(const RunSpec &run, const EngineOptions &opt, const G
         if (opt.rung == 3) {
             persistent_kernel<T>
                 <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
+        } else if (opt.rung == 7) {
+            persistent_shared_kernel<T><<<blocks, kBlockSize, shared_bytes>>>(
+                geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
         } else if (opt.profiles) {
             persistent_regs_kernel<T>
                 <<<blocks, kBlockSize>>>(geo, plan, opt.seed, 0, run.photons, arrays, d_next.get());
@@ -242,8 +291,19 @@ RunResult run_cuda(const RunSpec &run_in, const EngineOptions &opt) {
     if (static_cast<uint64_t>(opt.batches) > run.photons) {
         throw ConfigError("batches cannot exceed the number of photons");
     }
-    if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3 && opt.rung != 5 && opt.rung != 6) {
-        throw ConfigError("rung must be 0, 1, 3, 5 or 6 (rungs 2 and 4 are not built yet)");
+    if (opt.rung != 0 && opt.rung != 1 && opt.rung != 3 && opt.rung != 5 && opt.rung != 6 &&
+        opt.rung != 7) {
+        throw ConfigError("rung must be 0, 1, 3, 5, 6 or 7 (rungs 2 and 4 are not built yet)");
+    }
+    if (opt.rung == 7) {
+        // One copy of the profiles per warp, with the widest accumulator (double): 48 KB is the
+        // shared memory a block may use without opting in.
+        const size_t needed = static_cast<size_t>(kBlockSize / 32) *
+                              static_cast<size_t>(geo.nz + geo.nr) * sizeof(double);
+        if (needed > 48 * 1024) {
+            throw ConfigError("rung 7 keeps the depth and radius profiles in shared memory, which "
+                              "needs fewer bins than this input has");
+        }
     }
     if (!opt.profiles && opt.rung != 6) {
         throw ConfigError("--no-profiles is a diagnostic for rung 6 only");

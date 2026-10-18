@@ -22,8 +22,8 @@ struct EngineOptions {
     uint64_t photons = 0; // if nonzero, overrides the photon count in the run description
     Precision precision = Precision::Float64;
     TallyPrecision gpu_tally = TallyPrecision::Float64; // used by the GPU engine only
-    int rung =
-        0; // GPU rung: 0 naive, 1 fewer atomics, 3 relaunch, 5 registers, 6 relaunch + registers
+    int rung = 0; // GPU rung: 0 naive, 1 fewer atomics, 3 relaunch, 5 registers, 6 both, 7 6 +
+                  // shared profiles
     // GPU diagnostic, rung 6 only: false skips the depth and radius profile tallies (they come out
     // as zeros) to measure what their atomic adds cost. Everything else is unchanged. Not a result.
     bool profiles = true;

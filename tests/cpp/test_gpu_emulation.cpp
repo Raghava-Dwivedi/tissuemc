@@ -127,6 +127,58 @@ Emulated emulate_persistent(const RunSpec &spec, uint64_t photons, uint64_t batc
         });
 }
 
+// Rung 7 on the host: rung 6's lanes, grouped `lanes_per_group` to a group like the warps of a
+// block, each group with its own private copy of the depth and radius profiles. The groups' copies
+// are summed into the global profiles at the end, as the kernel's flush does.
+template <class T>
+Emulated emulate_grouped(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed,
+                         size_t lanes, size_t lanes_per_group, bool shuffled,
+                         unsigned long long *claimed = nullptr) {
+    return emulate_with<T>(
+        spec, photons, batches,
+        [&](const Geometry<float> &geo, const BatchPlan &plan, const GpuTallyArrays<T> &arrays) {
+            const size_t groups = (lanes + lanes_per_group - 1) / lanes_per_group;
+            const size_t nz = static_cast<size_t>(geo.nz), nr = static_cast<size_t>(geo.nr);
+            std::vector<std::vector<T>> az(groups, std::vector<T>(nz, T(0)));
+            std::vector<std::vector<T>> rr(groups, std::vector<T>(nr, T(0)));
+            std::vector<PersistentLaneRegs<T>> pool;
+            for (size_t i = 0; i < lanes; ++i) {
+                GpuTallyArrays<T> mine = arrays;
+                mine.az = az[i / lanes_per_group].data();
+                mine.rr = rr[i / lanes_per_group].data();
+                pool.emplace_back(mine, geo.num_layers);
+            }
+            std::vector<char> live(lanes, 1);
+            size_t remaining = lanes;
+            unsigned long long next = 0;
+            uint64_t lcg = 0x9e3779b97f4a7c15ull;
+            size_t i = 0;
+            while (remaining > 0) {
+                if (shuffled) {
+                    lcg = lcg * 6364136223846793005ull + 1442695040888963407ull;
+                    i = static_cast<size_t>((lcg >> 33) % lanes);
+                } else {
+                    i = (i + 1) % lanes;
+                }
+                if (live[i] && !pool[i].advance(geo, seed, plan, 0, photons, &next)) {
+                    live[i] = 0;
+                    --remaining;
+                }
+            }
+            for (size_t g = 0; g < groups; ++g) { // the flush
+                for (size_t b = 0; b < nz; ++b) {
+                    arrays.az[b] += az[g][b];
+                }
+                for (size_t b = 0; b < nr; ++b) {
+                    arrays.rr[b] += rr[g][b];
+                }
+            }
+            if (claimed != nullptr) {
+                *claimed = next;
+            }
+        });
+}
+
 // Rung 5 on the host: one photon at a time, with the register-resident tally and generator.
 template <class T>
 Emulated emulate_r5(const RunSpec &spec, uint64_t photons, uint64_t batches, uint64_t seed) {
@@ -535,4 +587,80 @@ TEST_CASE("rung 6 without profiles scores everything else exactly as rung 6 does
     CHECK(rr_with > 0);
     CHECK(az_without == 0);
     CHECK(rr_without == 0);
+}
+
+TEST_CASE("rung 7 with one lane is rung 6, bit for bit") {
+    // One lane in one group: the group's copy starts at zero and receives every add in rung 6's
+    // order, so adding it to the zeroed global arrays reproduces rung 6 exactly.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r6 =
+        emulate_persistent<double, PersistentLaneRegs>(spec, photons, batches, 11, 1, false);
+    const Emulated r7 = emulate_grouped<double>(spec, photons, batches, 11, 1, 32, false);
+    CHECK(r7.events == r6.events);
+    CHECK(r7.rd == r6.rd);
+    CHECK(r7.tt == r6.tt);
+    CHECK(r7.absorbed == r6.absorbed);
+    CHECK(r7.az == r6.az);
+    CHECK(r7.rr == r6.rr);
+}
+
+TEST_CASE("rung 7's per-warp profile copies sum to rung 6's profiles") {
+    // The same lanes advanced in the same order score the same adds, so R_d, T_t, absorbed weight
+    // and counts are identical to rung 6's. Only the profiles are accumulated differently (in
+    // groups, then summed), so they agree to double rounding, per bin.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    struct Case {
+        size_t lanes, per_group;
+        bool shuffled;
+    };
+    for (const Case c :
+         {Case{64, 32, false}, Case{37, 8, true}, Case{500, 32, true}, Case{3, 32, false}}) {
+        CAPTURE(c.lanes);
+        CAPTURE(c.per_group);
+        const Emulated r6 = emulate_persistent<double, PersistentLaneRegs>(spec, photons, batches,
+                                                                           11, c.lanes, c.shuffled);
+        unsigned long long claimed = 0;
+        const Emulated r7 = emulate_grouped<double>(spec, photons, batches, 11, c.lanes,
+                                                    c.per_group, c.shuffled, &claimed);
+        CHECK(claimed == photons + c.lanes);
+        CHECK(r7.events == r6.events);
+        CHECK(r7.rd == r6.rd);
+        CHECK(r7.tt == r6.tt);
+        CHECK(r7.absorbed == r6.absorbed);
+        double az_sum = 0, rr_sum = 0;
+        for (size_t i = 0; i < r6.az.size(); ++i) {
+            CHECK(std::fabs(r7.az[i] - r6.az[i]) <= 1e-12 * (1.0 + r6.az[i]));
+            az_sum += r6.az[i];
+        }
+        for (size_t i = 0; i < r6.rr.size(); ++i) {
+            CHECK(std::fabs(r7.rr[i] - r6.rr[i]) <= 1e-12 * (1.0 + r6.rr[i]));
+            rr_sum += r6.rr[i];
+        }
+        CHECK(az_sum > 0); // the comparison is not trivially between two empty profiles
+        CHECK(rr_sum > 0);
+    }
+}
+
+TEST_CASE("rung 7's profiles agree with the CPU engine's") {
+    // The depth profile is binned with a float division here and a double division in the CPU
+    // engine, so a photon on a bin edge can land in a neighbouring bin: bins agree to a part in a
+    // thousand and the totals to rounding, as for rung 0.
+    const RunSpec spec = v3();
+    const uint64_t photons = 20'000, batches = 8;
+    const Emulated r7 = emulate_grouped<double>(spec, photons, batches, 11, 61, 32, true);
+    const RunResult cpu = cpu_float32(spec, photons, batches, 11);
+    double sum7 = 0, sum_cpu = 0, rsum7 = 0, rsum_cpu = 0;
+    for (size_t i = 0; i < r7.az.size(); ++i) {
+        CHECK(std::fabs(r7.az[i] - cpu.a_z[i]) <= 1e-3 * (1.0 + cpu.a_z[i]));
+        sum7 += r7.az[i];
+        sum_cpu += cpu.a_z[i];
+    }
+    for (size_t i = 0; i < r7.rr.size(); ++i) {
+        rsum7 += r7.rr[i];
+        rsum_cpu += cpu.rd_r[i];
+    }
+    CHECK(std::fabs(sum7 - sum_cpu) < 1e-6 * sum_cpu);
+    CHECK(std::fabs(rsum7 - rsum_cpu) < 1e-6 * rsum_cpu);
 }

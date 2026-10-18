@@ -83,13 +83,17 @@ jobs:
           cuobjdump --dump-resource-usage build-cuda/tissuemc | grep -E 'Function|REG' | paste - - | sed 's/Resource usage://' | cut -c1-260
           # Also: CALL = device functions the compiler did not inline (their arguments must live on
           # the stack); fixed = local accesses at a fixed stack offset, dynamic = at a computed
-          # address (the signature of an array indexed at run time).
+          # address (the signature of an array indexed at run time). ATOMS = atomics in shared
+          # memory; ATOM and RED = atomics on global memory.
           cuobjdump -sass build-cuda/tissuemc | awk '
             /Function :/ {fn=$3; seen[fn]=1}
             /CALL/ {call[fn]++}
+            /ATOMS/ {atoms[fn]++}
+            /ATOM\./ {atom[fn]++}
+            / RED\./ {red[fn]++}
             /LDL|STL/ { if ($0 ~ /\[R1(\+0x[0-9a-f]+)?\]/) fixed[fn]++; else dyn[fn]++ }
             /LDL/ {ld[fn]++} /STL/ {st[fn]++}
-            END {for (f in seen) printf "%-100s LDL=%d STL=%d fixed=%d dynamic=%d CALL=%d\n", f, ld[f], st[f], fixed[f], dyn[f], call[f]}'
+            END {for (f in seen) printf "%-100s LDL=%d STL=%d fixed=%d dynamic=%d CALL=%d ATOMS(shared)=%d ATOM(global)=%d RED(global)=%d\n", f, ld[f], st[f], fixed[f], dyn[f], call[f], atoms[f], atom[f], red[f]}'
 
   lint:
     name: Format and lint

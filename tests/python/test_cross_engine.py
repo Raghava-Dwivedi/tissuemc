@@ -69,3 +69,55 @@ def test_a_shift_in_absorbed_weight_alone_is_caught():
     gaps = cross_engine.compare_runs(fake_run(), shifted)
     failed = [g.name for g in gaps if not g.passed]
     assert failed and all("absorbed" in name for name in failed)
+
+
+def _with_profiles(run: dict, az: list[float], rr: list[float]) -> dict:
+    return {**run, "a_z": az, "rd_r": rr}
+
+
+AZ = [40.0, 25.0, 15.0, 10.0, 6.0, 3.0, 1.0]
+RR = [5.0, 4.0, 3.0, 2.0, 1.0]
+
+
+def test_identical_profiles_pass_and_are_reported():
+    run = _with_profiles(fake_run(), AZ, RR)
+    gaps = cross_engine.compare_runs(run, run)
+    names = [g.name for g in gaps]
+    assert "a_z: total relative gap" in names and "rd_r: worst cumulative gap / total" in names
+    assert all(g.passed for g in gaps)
+
+
+def test_a_lost_copy_of_the_depth_profile_is_caught():
+    """The error a per-warp privatization invites: one warp's copy never reaches the total."""
+    a = _with_profiles(fake_run(), AZ, RR)
+    lost = [v * 0.75 for v in AZ]  # a quarter of the profile missing, as with one of four warps
+    b = _with_profiles(fake_run(), lost, RR)
+    failed = {g.name for g in cross_engine.compare_runs(a, b) if not g.passed}
+    assert failed == {"a_z: total relative gap", "a_z: worst cumulative gap / total"}
+
+
+def test_a_double_flush_of_the_radius_profile_is_caught():
+    a = _with_profiles(fake_run(), AZ, RR)
+    b = _with_profiles(fake_run(), AZ, [v * 2 for v in RR])
+    failed = {g.name for g in cross_engine.compare_runs(a, b) if not g.passed}
+    assert "rd_r: total relative gap" in failed and not any(n.startswith("a_z") for n in failed)
+
+
+def test_a_photon_moved_to_a_neighbouring_bin_is_tolerated():
+    """Bin-edge photons differ between engines that bin in float and in double."""
+    a = _with_profiles(fake_run(), AZ, RR)
+    moved = list(AZ)
+    moved[0] -= 1e-5
+    moved[1] += 1e-5
+    assert all(
+        g.passed for g in cross_engine.compare_runs(a, _with_profiles(fake_run(), moved, RR))
+    )
+
+
+def test_profiles_are_skipped_when_absent_or_when_the_diagnostic_zeroes_them():
+    names = [g.name for g in cross_engine.compare_runs(fake_run(), fake_run())]
+    assert not any(n.startswith(("a_z", "rd_r")) for n in names)  # runs without profiles
+    a = _with_profiles(fake_run(), AZ, RR)
+    zeros = _with_profiles(fake_run(), [0.0] * len(AZ), [0.0] * len(RR))
+    assert not all(g.passed for g in cross_engine.compare_runs(a, zeros))
+    assert all(g.passed for g in cross_engine.compare_runs(a, zeros, profiles=False))

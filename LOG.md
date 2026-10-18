@@ -139,3 +139,15 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Not shown: that a real kernel can reach 0.82 s. The diagnostic is the target, not the result.
 - Next: a rung that keeps the profiles but stops serializing their adds: per-block histograms in shared memory (the planned privatization rung, now applied to R6), judged against both R6 and this diagnostic.
 
+## R7: the depth and radius profiles in shared memory
+
+*Design:* [`docs/rungs/R7.md`](docs/rungs/R7.md) · *Notebook:* [`notebooks/colab_gpu_r7.ipynb`](notebooks/colab_gpu_r7.ipynb)
+
+**Prediction:** none (measurement-only).
+
+**Why this rung:** the diagnostic showed that the per-event depth-profile atomics are 92% of R6's time: without them R6 took 0.823 s instead of 10.053 s. R7 keeps the profiles and removes the contention: a private copy per warp in shared memory, flushed once per block. The diagnostic is the target, not the result: R7 cannot beat it, and how near it gets is what R7 measures.
+
+**Before any GPU run, from the continuous-integration build and the host tests only:** the host emulation shows the profiles equal R6's to double rounding (bit for bit with one lane) and agree with the CPU engine; the GPU comparison against the CPU now also checks the profiles, with limits fixed before this run from the host emulation and from the CPU's float32 against float64 gaps on V3.
+
+**Result:** not run on a GPU yet.
+
