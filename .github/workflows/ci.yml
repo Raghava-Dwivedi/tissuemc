@@ -98,7 +98,7 @@ jobs:
           # loop (ATOMS.CAS) on this architecture, an integer or float add would be ATOMS.ADD.
           cuobjdump -sass build-cuda/tissuemc | awk '
             /Function :/ {fn=$3}
-            match($0, /(ATOMS|ATOM|RED)\.[A-Z0-9.]*/) {ops[fn " " substr($0, RSTART, RLENGTH)]++}
+            match($0, /(ATOMS|ATOM|RED|MATCH|SHFL)\.[A-Z0-9.]*/) {ops[fn " " substr($0, RSTART, RLENGTH)]++}
             END {for (k in ops) printf "OPCODE %-100s x%d\n", k, ops[k]}' | sort
 
   lint:

@@ -28,7 +28,7 @@ void usage(std::FILE *to) {
             "  --threads T    CPU threads, 0 = one per hardware thread (default 1)\n"
             "  --precision P  float64 (default) or float32 transport; tallies are always double\n"
             "  --engine E     cpu (default) or cuda\n"
-            "  --rung N       GPU rung: 0, 1, 3, 5, 6 or 7\n"
+            "  --rung N       GPU rung: 0, 1, 3, 5, 6, 7 or 8\n"
             "  --no-profiles  GPU diagnostic for rung 6: skip the depth and radius profiles\n"
             "  --output FILE  write full results as JSON\n");
 }

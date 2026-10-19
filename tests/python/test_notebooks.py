@@ -147,3 +147,40 @@ def test_the_r7_notebook_gates_its_long_steps_and_labels_the_diagnostic():
     profiles = next(s for s in sources if "--full" in s)
     assert profiles.count("--reuse-csv") == 2 and profiles.count("--no-profiles") == 1
     assert "not a result" in "".join(nb["cells"][0]["source"])
+
+
+def test_the_r8_notebook_gates_its_long_steps_and_labels_the_diagnostic():
+    nb = json.loads((ROOT / "notebooks" / "colab_gpu_r8.ipynb").read_text())
+    sources = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    check = next(s for s in sources if "--photons 200000" in s)
+    assert ".quick_ok" in check and "&&" in check and "--b-rung 8" in check
+    long_keys = (
+        "tissuemc-validate",
+        "tissuemc-bench",
+        "tissuemc-profile --rung",
+        "--photons 2000000",
+    )
+    gated = [s for s in sources if any(k in s for k in long_keys)]
+    assert len(gated) == 4
+    for s in gated:
+        commands = [ln for ln in s.splitlines() if ln.startswith("!")]
+        assert commands and all(
+            "[ -f results/.quick_ok ]" in ln and "SKIPPED" in ln for ln in commands
+        )
+    compare = next(s for s in sources if "--photons 2000000" in s)
+    assert "--b-rung 7" in compare and "--b-rung 8" in compare
+    benches = [
+        ln
+        for ln in next(s for s in sources if "tissuemc-bench" in s).splitlines()
+        if "tissuemc-bench" in ln
+    ]
+    assert [ln.split("--rung ")[1].split()[0] for ln in benches] == ["7", "8", "6", "8"]
+    assert ["--no-profiles" in ln for ln in benches] == [
+        False,
+        False,
+        True,
+        False,
+    ]  # only the target
+    profiles = next(s for s in sources if "--full" in s)
+    assert profiles.count("--reuse-csv") == 2 and "--no-profiles" not in profiles
+    assert "not a result" in "".join(nb["cells"][0]["source"])

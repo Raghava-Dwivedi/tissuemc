@@ -184,6 +184,55 @@ TMC_HD inline void run_photon_r1(const Geometry<float> &geo, uint64_t seed, uint
     tally.flush_counters();
 }
 
+// Rung R8: combine the lanes of a warp that add to the same table bin into one add.
+//
+// R7 keeps one copy of the depth profile per warp in shared memory and updates it with a
+// compare-and-swap loop, because there is no hardware add for double precision in shared memory.
+// Lanes of a warp that add to the same bin in the same instruction retry against each other in
+// turn: the counters showed about 19 loop iterations per intended add, a double-precision pipe 77%
+// busy and six times the divergent branches. Here the lanes that are executing together and share
+// a bin first sum their weights, and one lane per bin makes the add, so there is nothing to retry
+// against inside the warp.
+//
+// The algorithm is written against a `Warp` policy so that tests can run it on the host with a
+// model of a warp's lanes. A policy provides lane(), activemask(), match_any(mask, key),
+// shfl(mask, value, source_lane) and add(table, bin, value). The CUDA policy is CudaWarp below.
+TMC_HD inline int lowest_set_bit(unsigned x) {
+#if defined(__CUDA_ARCH__)
+    return __ffs(x) - 1;
+#else
+    return __builtin_ctz(x);
+#endif
+}
+
+template <class T, class Warp>
+TMC_HD inline void aggregated_add(Warp &warp, T *table, int bin, float w) {
+    const unsigned peers = warp.match_any(warp.activemask(), bin); // lanes with the same bin
+    float sum = 0.0f;
+    for (unsigned rest = peers; rest != 0u; rest &= rest - 1u) {
+        sum += warp.shfl(peers, w, lowest_set_bit(rest)); // every lane of the group sums the group
+    }
+    if (warp.lane() == lowest_set_bit(peers)) { // one add per group, by its lowest lane
+        warp.add(table, bin, static_cast<T>(sum));
+    }
+}
+
+#if defined(__CUDA_ARCH__)
+struct CudaWarp {
+    __device__ int lane() const { return threadIdx.x & 31; }
+    __device__ unsigned activemask() const { return __activemask(); }
+    __device__ unsigned match_any(unsigned mask, int key) const {
+        return __match_any_sync(mask, key);
+    }
+    __device__ float shfl(unsigned mask, float value, int source_lane) const {
+        return __shfl_sync(mask, value, source_lane);
+    }
+    template <class T> __device__ void add(T *table, int bin, T value) const {
+        atomicAdd(&table[bin], value);
+    }
+};
+#endif
+
 // Rung R5: R1's scoring with the per-layer accumulator held in registers.
 //
 // The profiler showed that the kernels' time goes to per-thread local memory, so R5 removes the
@@ -195,12 +244,15 @@ TMC_HD inline void run_photon_r1(const Geometry<float> &geo, uint64_t seed, uint
 // is still one, and the depth and radius profiles are unchanged. The random generator is
 // RegPhotonRng, for the same reason.
 //
+// With Aggregate = true (rung R8, device code only) the depth-profile adds of the lanes of a warp
+// that share a bin are combined first (see aggregated_add).
+//
 // With Profiles = false the depth and radius profiles are not tallied at all: a diagnostic, used to
 // measure what their atomic adds cost (rung 6 only; the profiles then come out as zeros).
 //
 // A layer's total is now published in several partial sums rather than one. Each is a float sum of
 // at most a photon's weight, so the rounding is no worse than R1's (validation checks it).
-template <class T, bool Profiles = true> struct GpuTallyR5 {
+template <class T, bool Profiles = true, bool Aggregate = false> struct GpuTallyR5 {
     GpuTallyArrays<T> out;
     int batch;
     int layers;
@@ -222,7 +274,17 @@ template <class T, bool Profiles = true> struct GpuTallyR5 {
         }
         run_sum += w;
         if constexpr (Profiles) {
-            TMC_ATOMIC_ADD(&out.az[bin(p.z, geo.dz, geo.nz)], static_cast<T>(w));
+            const int b = bin(p.z, geo.dz, geo.nz);
+#if defined(__CUDA_ARCH__)
+            if constexpr (Aggregate) {
+                CudaWarp warp;
+                aggregated_add(warp, out.az, b, w);
+            } else {
+                TMC_ATOMIC_ADD(&out.az[b], static_cast<T>(w));
+            }
+#else
+            TMC_ATOMIC_ADD(&out.az[b], static_cast<T>(w)); // the host has no warp: plain adds
+#endif
         }
     }
 
@@ -354,6 +416,9 @@ template <class T> using PersistentLaneRegs = PersistentLaneOf<T, GpuTallyR5<T>,
 // EngineOptions::profiles).
 template <class T>
 using PersistentLaneRegsNoProfiles = PersistentLaneOf<T, GpuTallyR5<T, false>, RegPhotonRng>;
+// Rung R8: rung 6's lane, with the depth-profile adds of a warp's lanes combined by bin.
+template <class T>
+using PersistentLaneRegsAggregated = PersistentLaneOf<T, GpuTallyR5<T, true, true>, RegPhotonRng>;
 
 // Dispatch on the rung number, shared by the kernel and the host emulation for rungs 0 and 1. The
 // other rungs do not go through here: rungs 3 and 6 are not one photon per call (see

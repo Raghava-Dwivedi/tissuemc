@@ -180,3 +180,17 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Not known: which of the loops' three consequences (instructions, double-precision throughput, waiting on atomic results) matters most. They have one cause.
 - Next: remove the retries without changing what is computed, by combining the lanes of a warp that add to the same bin before adding, and judge it by R7's own counters (loop iterations, double-precision pipe, divergent branches) as well as by time.
 
+## R8: combine the lanes that share a bin
+
+*Design:* [`docs/rungs/R8.md`](docs/rungs/R8.md) · *Notebook:* [`notebooks/colab_gpu_r8.ipynb`](notebooks/colab_gpu_r8.ipynb)
+
+**Prediction:** none (measurement-only).
+
+**Why this rung:** R7's counters put its remaining cost in the compare-and-swap loops: about 19 iterations per intended add, 5.1 billion extra warp instructions, six times the divergent branches and a double-precision pipe 77% busy, all consequences of lanes of one warp retrying against each other on the same few bins. R8 combines those lanes first, so one lane per bin makes the add.
+
+**How the result will be read:** judged by R7's own counters as well as by time. If the cause was the retries, the loop iterations, the double-precision pipe use and the divergent branches should fall together. If only some fall, the cause was more than one thing. The aggregation has a cost of its own (a match and a loop of shuffles), so R8 could also be slower than R7.
+
+**Before any GPU run, from the host tests only:** the aggregation algorithm is correct on a model of 32 lanes (random warps and the edge cases; two deliberate bugs are caught). The CUDA intrinsics are untested until the GPU run.
+
+**Result:** not run on a GPU yet.
+

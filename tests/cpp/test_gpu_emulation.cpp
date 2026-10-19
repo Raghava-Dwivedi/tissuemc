@@ -664,3 +664,149 @@ TEST_CASE("rung 7's profiles agree with the CPU engine's") {
     CHECK(std::fabs(sum7 - sum_cpu) < 1e-6 * sum_cpu);
     CHECK(std::fabs(rsum7 - rsum_cpu) < 1e-6 * rsum_cpu);
 }
+
+namespace {
+
+// A model of one warp executing aggregated_add in lock step: every active lane has a key and a
+// value, the lanes' calls are made one after another, and each sees the others' values through
+// match_any and shfl exactly as the hardware intrinsics would give them. add() counts the adds.
+struct HostWarpModel {
+    unsigned active = 0;
+    int keys[32] = {};
+    float values[32] = {};
+    int current = 0;
+    std::vector<std::pair<int, int>> adds; // (bin, the lane that made the add)
+
+    int lane() const { return current; }
+    unsigned activemask() const { return active; }
+    unsigned match_any(unsigned mask, int key) const {
+        unsigned peers = 0;
+        for (int l = 0; l < 32; ++l) {
+            if (((mask >> l) & 1u) != 0u && keys[l] == key) {
+                peers |= 1u << l;
+            }
+        }
+        return peers;
+    }
+    float shfl(unsigned mask, float, int source_lane) const {
+        REQUIRE(((mask >> source_lane) & 1u) != 0u); // a lane may only read from a lane in the mask
+        return values[source_lane];
+    }
+    template <class T> void add(T *table, int bin, T value) {
+        table[bin] += value;
+        adds.emplace_back(bin, current);
+    }
+};
+
+// Run the model for every active lane and check the table against a plain sum.
+void check_aggregation(HostWarpModel &warp, size_t bins) {
+    std::vector<double> table(bins, 0.0), expected(bins, 0.0);
+    std::vector<int> group_lowest(bins, 99);
+    std::vector<int> groups(bins, 0);
+    for (int l = 0; l < 32; ++l) {
+        if (((warp.active >> l) & 1u) == 0u) {
+            continue;
+        }
+        warp.current = l;
+        aggregated_add(warp, table.data(), warp.keys[l], warp.values[l]);
+        expected[static_cast<size_t>(warp.keys[l])] += static_cast<double>(warp.values[l]);
+        if (groups[static_cast<size_t>(warp.keys[l])]++ == 0) {
+            group_lowest[static_cast<size_t>(warp.keys[l])] = l;
+        }
+    }
+    size_t distinct = 0;
+    for (size_t b = 0; b < bins; ++b) {
+        distinct += groups[b] > 0 ? 1 : 0;
+        CHECK(std::fabs(table[b] - expected[b]) <= 1e-6 * (1e-12 + expected[b]));
+    }
+    CHECK(warp.adds.size() == distinct); // one add per distinct bin
+    for (const auto &a : warp.adds) {
+        CHECK(a.second == group_lowest[static_cast<size_t>(a.first)]); // by the group's lowest lane
+    }
+}
+
+} // namespace
+
+TEST_CASE("warp aggregation: one add per distinct bin, carrying the group's whole weight") {
+    uint64_t lcg = 0x2545f4914f6cdd1dull;
+    auto next = [&]() {
+        lcg = lcg * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<unsigned>(lcg >> 33);
+    };
+    // Random warps: random active masks and bins drawn from a skewed distribution over 40 bins, the
+    // way a depth profile is, so that groups of every size occur.
+    for (int trial = 0; trial < 500; ++trial) {
+        HostWarpModel warp;
+        warp.active = next();
+        if (warp.active == 0) {
+            warp.active = 1;
+        }
+        for (int l = 0; l < 32; ++l) {
+            const unsigned r = next() % 100;
+            warp.keys[l] = r < 40 ? 0 : (r < 60 ? 1 : static_cast<int>(next() % 40));
+            warp.values[l] = static_cast<float>(1 + next() % 1000) * 1e-6f;
+        }
+        check_aggregation(warp, 40);
+    }
+}
+
+TEST_CASE("warp aggregation: the edge cases") {
+    { // every lane in one bin: one add with the sum of all 32 weights
+        HostWarpModel warp;
+        warp.active = 0xffffffffu;
+        for (int l = 0; l < 32; ++l) {
+            warp.keys[l] = 7;
+            warp.values[l] = 0.25f;
+        }
+        check_aggregation(warp, 40);
+        CHECK(warp.adds.size() == 1);
+    }
+    { // every lane in its own bin: no combining, 32 adds
+        HostWarpModel warp;
+        warp.active = 0xffffffffu;
+        for (int l = 0; l < 32; ++l) {
+            warp.keys[l] = l;
+            warp.values[l] = 0.5f;
+        }
+        check_aggregation(warp, 40);
+        CHECK(warp.adds.size() == 32);
+    }
+    { // one active lane
+        HostWarpModel warp;
+        warp.active = 1u << 19;
+        warp.keys[19] = 3;
+        warp.values[19] = 0.125f;
+        check_aggregation(warp, 40);
+        CHECK(warp.adds.size() == 1);
+    }
+    { // inactive lanes that happen to carry the same key must not contribute
+        HostWarpModel warp;
+        warp.active = 0x0000f0f0u;
+        for (int l = 0; l < 32; ++l) {
+            warp.keys[l] = 5;
+            warp.values[l] = 1.0f;
+        }
+        check_aggregation(warp, 40);
+        CHECK(warp.adds.size() == 1);
+    }
+}
+
+TEST_CASE("the aggregating tally scores like the plain one on the host") {
+    // On the host there is no warp, so the aggregating tally falls back to plain adds; this checks
+    // the rest of the tally is unchanged and that rung 8's lane runs end to end.
+    const RunSpec spec = v3();
+    const uint64_t photons = 8'000, batches = 4;
+    const Emulated plain = emulate_grouped<double>(spec, photons, batches, 11, 37, 8, true);
+    const Emulated lane = emulate_persistent<double, PersistentLaneRegsAggregated>(
+        spec, photons, batches, 11, 37, true);
+    CHECK(lane.events == plain.events);
+    CHECK(lane.rd == plain.rd);
+    CHECK(lane.tt == plain.tt);
+    CHECK(lane.absorbed == plain.absorbed);
+    double a = 0, b = 0;
+    for (size_t i = 0; i < plain.az.size(); ++i) {
+        a += plain.az[i];
+        b += lane.az[i];
+    }
+    CHECK(std::fabs(a - b) < 1e-9 * a);
+}

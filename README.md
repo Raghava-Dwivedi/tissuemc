@@ -341,7 +341,7 @@ The saved profiles of the profiles-off diagnostic (A, the target) and R7 (B), 50
 - **The double-precision pipe is the busiest resource R7 has.** It is 76.77% busy while active (the diagnostic: 0.24%), because every loop iteration does a `double` add and the T4 does double precision at 1/32 of its single-precision rate. A rough model (one double add per iteration, 16 cycles per warp-level double add on the T4's two double-precision units per multiprocessor) predicts 73%. The stall breakdown agrees in outline: 46% of the wait is for the atomics' results.
 - **It is not a capacity problem.** Shared memory would allow 10 resident blocks against the 8 the warp limit allows, and 97.38% of the warp slots are occupied.
 
-What the counters do **not** say is which of the three consequences of the loops (the extra instructions, the double-precision throughput, the waiting on atomic results) matters most; they share one cause, and the test is to remove the retries. The way to do that without changing what is computed is to combine the lanes of a warp that add to the same bin before adding.
+What the counters do **not** say is which of the three consequences of the loops (the extra instructions, the double-precision throughput, the waiting on atomic results) matters most; they share one cause, and the test is to remove the retries. Rung R8 ([`docs/rungs/R8.md`](docs/rungs/R8.md)) does that without changing what is computed, by combining the lanes of a warp that add to the same bin before adding; it is written and tested on the host but has not run on a GPU.
 
 ## Development process
 
