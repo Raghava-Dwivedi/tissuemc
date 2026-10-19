@@ -1,0 +1,174 @@
+{
+ "provenance": "The final-cell summary of notebooks/colab_gpu_r7.ipynb, run by the repository owner on a free Colab T4 at the commit named inside (the run date was not recorded), and pasted in unchanged. The per-file JSON results written in the session were not saved. The notebook's profiling cells (every Nsight Compute counter for the profiles-off diagnostic and for R7, and their digest) are not part of this record: their output was not pasted. The 'r6_noprofiles' entry is the DIAGNOSTIC (the depth and radius profiles were not tallied, it was not validated as a result); it is the target R7 is judged against, not a result.",
+ "rung": 7,
+ "prediction_recorded_before_run": false,
+ "summary": {
+  "commit": "64790f3195b78ac94031b22b393cbd142fafd045",
+  "device": "Tesla T4 (sm_75)",
+  "validation_r7": {
+   "checks": 24,
+   "passed": 24,
+   "failed": []
+  },
+  "cross_engine_r6": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033671515250452877,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.9520668681265484e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ],
+    "a_z: total relative gap": [
+     1.2221296326238112e-06,
+     0.0001
+    ],
+    "a_z: worst cumulative gap / total": [
+     1.7518562072420818e-06,
+     0.001
+    ],
+    "rd_r: total relative gap": [
+     1.2852136930793187e-06,
+     0.0001
+    ],
+    "rd_r: worst cumulative gap / total": [
+     6.395012031149368e-06,
+     0.001
+    ]
+   }
+  },
+  "cross_engine_r7": {
+   "agree": true,
+   "gaps": {
+    "rd: total gap / standard error": [
+     0.0012989551332455264,
+     0.25
+    ],
+    "rd: worst per-batch relative gap": [
+     7.970338681754085e-05,
+     0.005
+    ],
+    "tt: total gap / standard error": [
+     0.008818636109841418,
+     0.25
+    ],
+    "tt: worst per-batch relative gap": [
+     0.0002425020797880199,
+     0.005
+    ],
+    "absorbed: total gap / standard error": [
+     0.0033671515250452925,
+     0.25
+    ],
+    "absorbed: worst per-batch relative gap": [
+     3.952066868083955e-05,
+     0.005
+    ],
+    "events: relative gap": [
+     2.3281169616240877e-06,
+     0.001
+    ],
+    "anomalies (both runs)": [
+     0.0,
+     0.0
+    ],
+    "a_z: total relative gap": [
+     1.2221296302650015e-06,
+     0.0001
+    ],
+    "a_z: worst cumulative gap / total": [
+     1.7518562050647192e-06,
+     0.001
+    ],
+    "rd_r: total relative gap": [
+     1.2852136930793187e-06,
+     0.0001
+    ],
+    "rd_r: worst cumulative gap / total": [
+     6.395012031149368e-06,
+     0.001
+    ]
+   }
+  },
+  "benchmark": {
+   "r6": {
+    "median_kernel_s": 10.052,
+    "kernel_seconds": [
+     10.055,
+     10.052,
+     10.051,
+     10.054,
+     10.052
+    ],
+    "million_events_per_s": 615.7,
+    "validated_first": true,
+    "profiles": true
+   },
+   "r7": {
+    "median_kernel_s": 1.961,
+    "kernel_seconds": [
+     1.939,
+     1.954,
+     1.966,
+     1.961,
+     1.969
+    ],
+    "million_events_per_s": 3156.4,
+    "validated_first": true,
+    "profiles": true
+   },
+   "r6_noprofiles": {
+    "median_kernel_s": 0.85,
+    "kernel_seconds": [
+     0.849,
+     0.85,
+     0.849,
+     0.852,
+     0.853
+    ],
+    "million_events_per_s": 7277.3,
+    "validated_first": false,
+    "profiles": false
+   },
+   "r7_again": {
+    "median_kernel_s": 2.016,
+    "kernel_seconds": [
+     2.005,
+     2.005,
+     2.016,
+     2.034,
+     2.035
+    ],
+    "million_events_per_s": 3070.6,
+    "validated_first": true,
+    "profiles": true
+   }
+  }
+ }
+}

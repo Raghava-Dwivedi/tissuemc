@@ -575,3 +575,62 @@ def test_the_ablation_is_not_presented_as_general():
     assert "40 50 1" in config  # nz = 40, nr = 50: the premise of the explanation
     assert "40 bins" in README and "was not measured" in README.replace("\n", " ")
     assert "coarse depth profile" in (ROOT / "docs" / "rungs" / "R7.md").read_text()
+
+
+def test_r7_readme_numbers_match_the_committed_summary():
+    data = json.loads((ROOT / "results" / "gpu-r7-summary.json").read_text())
+    assert data["prediction_recorded_before_run"] is False and data["rung"] == 7
+    s = data["summary"]
+    assert s["validation_r7"]["checks"] == 24 and s["validation_r7"]["failed"] == []
+    for key in ("cross_engine_r6", "cross_engine_r7"):
+        assert s[key]["agree"] is True
+        assert all(value <= limit for value, limit in s[key]["gaps"].values()), key
+    g6, g7 = s["cross_engine_r6"]["gaps"], s["cross_engine_r7"]["gaps"]
+    profile_keys = (
+        "a_z: total relative gap",
+        "a_z: worst cumulative gap / total",
+        "rd_r: total relative gap",
+        "rd_r: worst cumulative gap / total",
+    )
+    for name in profile_keys:  # the profile gaps exist and R6's and R7's agree
+        assert abs(g6[name][0] / g7[name][0] - 1) < 1e-6, name
+    for name in (
+        "rd: total gap / standard error",
+        "tt: total gap / standard error",
+        "events: relative gap",
+    ):
+        assert g6[name] == g7[name], name  # "identical to R6's to every printed digit"
+    b = s["benchmark"]
+    assert b["r7"]["profiles"] is True and b["r6_noprofiles"]["profiles"] is False
+    assert b["r6_noprofiles"]["validated_first"] is False
+    t = {k: v["median_kernel_s"] for k, v in b.items()}
+    ev = {k: v["million_events_per_s"] for k, v in b.items()}
+    readme = README.replace("**", "")
+    for label, key in (
+        ("R6", "r6"),
+        ("R7", "r7"),
+        ("R6 without the profile atomics (diagnostic: the target, not a result)", "r6_noprofiles"),
+        ("R7 (again)", "r7_again"),
+    ):
+        assert f"| {label} | {t[key]:.3f} s | {ev[key]} |" in readme, label
+    implied = [ev[k] * t[k] for k in t]
+    assert max(implied) / min(implied) < 1.001  # the same work in every run
+    x1, x2 = t["r6"] / t["r7"], t["r6"] / t["r7_again"]
+    over = t["r7"] / t["r6_noprofiles"]
+    gain = 100 * (t["r6"] - t["r7"]) / (t["r6"] - t["r6_noprofiles"])
+    assert (
+        f"R7 is {x1:.1f} times faster than R6" in readme
+        and f"({x2:.1f} times on the repeat)" in readme
+    )
+    assert f"it takes {over:.1f} times the diagnostic's time, closing {gain:.0f}%" in readme
+    assert t["r7"] > t["r6_noprofiles"]  # R7 cannot beat a kernel that skips its work
+    assert (
+        "not a result" in readme
+        and "R7 cannot be faster than a kernel that skips its work" in readme
+    )
+    # The log and the validation table carry the same results.
+    log = (ROOT / "LOG.md").read_text().replace("**", "")
+    assert f"R7 {t['r7']:.3f} s ({ev['r7']})" in log and "Did the design work? Largely" in log
+    assert "Not known: why R7 is still" in log
+    validation = (ROOT / "VALIDATION.md").read_text()
+    assert "were not compared on the GPU" in validation

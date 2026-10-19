@@ -149,5 +149,17 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 
 **Before any GPU run, from the continuous-integration build and the host tests only:** the host emulation shows the profiles equal R6's to double rounding (bit for bit with one lane) and agree with the CPU engine; the GPU comparison against the CPU now also checks the profiles, with limits fixed before this run from the host emulation and from the CPU's float32 against float64 gaps on V3.
 
-**Result:** not run on a GPU yet.
+**Result:**
+- Validation on the GPU: 24 of 24 checks pass.
+- Same photons through the CPU (float32), 2×10⁶ photons, now including the depth and radius profiles: R6 and R7 both pass. Profile gaps for R7: depth total 1.22e-06 and shape 1.75e-06, radius total 1.29e-06 and shape 6.40e-06, against limits of 1e-4 and 1e-3 fixed before the run (R6's are the same to nine digits). R_d, T_t and event-count gaps identical to R6's; absorbed weight 0.0034 standard errors. This is the first time the profiles are compared on the GPU for any rung.
+- Throughput, same session, 4×10⁶ photons, median kernel time of 5 repeats: R6 10.052 s (615.7 million events/s), **R7 1.961 s (3156.4)**, the profiles-off diagnostic 0.850 s (7277.3), R7 again 2.016 s (3070.6). R7 is 5.13 times faster than R6 (4.99 on the repeat) for the same 6.19 billion events. Repeats span 1.55% for R7 and 0.04% for R6; R7's second run is 2.8% slower than its first.
+- The notebook's profiling cells (counters for the diagnostic and R7) were not part of what was pasted.
+
+**Did the design work?** Largely:
+- Measured: R7 is 5.1 times faster than R6 with the profiles kept and correct, and takes 2.31 times the diagnostic's time: it closes 87.9% of the gap between R6 (10.052 s) and the target (0.850 s).
+- Measured: the diagnostic took 0.850 s this session and 0.823 s in the last (+3.3%), while R6 took 10.052 s in both. R7 varies more than R6 did.
+- Suggested, not tested: R7's time follows the multiprocessors' clock, where R6's followed a fixed-rate atomic unit; that would explain the larger run-to-run and session-to-session variation.
+- Not known: why R7 is still 1.11 s above the target. Candidates from reading the code, untested: compare-and-swap loops for the `double` adds in shared memory, retries among lanes of a warp that hit the same bin, the flush, and R7's higher register count (52 against 47 to 49 in the compiler's output).
+- Not claimed: anything about inputs with other profile sizes. The cost removed comes from this benchmark's 40-bin depth profile.
+- Next: read R7's counters against the diagnostic's (the digest the notebook prints, or the saved profiles in the session) before changing anything.
 

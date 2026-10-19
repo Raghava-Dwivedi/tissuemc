@@ -2,7 +2,7 @@
 
 **Validated Monte Carlo simulation of light transport in layered biological tissue, with a measured GPU optimization study.**
 
-> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, took 10.06 s and 10.05 s, the same as R1's 10.06 s: registers removed R3's loss but did not make the kernel faster than R1, so what limits R1 is not yet identified. R6's counters then pointed at the depth-profile atomics, and a diagnostic that removes them ([`docs/diagnostics.md`](docs/diagnostics.md)) confirmed it: the same kernel took 0.82 s instead of 10.05 s, so those atomics are 92% of R6's time. The fix, rung R7 ([`docs/rungs/R7.md`](docs/rungs/R7.md)), keeps the profiles in shared memory; it is written and tested on the host but has not run on a GPU. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
+> **Status: under construction.** The CPU engine is built, validated, cross-checked against the original MCML and benchmarked. The first CUDA rung (R0, the naive baseline) has run on a T4 and is validated. Rung R1 (fewer atomics) is validated on the GPU and about 10% faster than R0; the hardware counters point at warp divergence as the main loss. Rung R3 (photon relaunch) raised the active lanes per warp from 4.74 to 21.61 of 32 but was about 6% slower than R1; a diagnostic run then put the wait on per-thread local memory. Rungs R5 and R6, which keep that state in registers, took 10.06 s and 10.05 s, the same as R1's 10.06 s: registers removed R3's loss but did not make the kernel faster than R1, so what limits R1 is not yet identified. R6's counters then pointed at the depth-profile atomics, and a diagnostic that removes them ([`docs/diagnostics.md`](docs/diagnostics.md)) confirmed it: the same kernel took 0.82 s instead of 10.05 s, so those atomics are 92% of R6's time. The fix, rung R7 ([`docs/rungs/R7.md`](docs/rungs/R7.md)), keeps the profiles in shared memory: 1.96 s against R6's 10.05 s, 5.1 times faster, with the profiles checked against the CPU. Every number below traces to a committed file in [`results/`](results) and the command that produced it.
 
 TissueMC reimplements the layered-tissue model of [MCML](https://omlc.org/software/mc/) (Wang, Jacques & Zheng, 1995) as:
 
@@ -293,6 +293,29 @@ The diagnostic ([`docs/diagnostics.md`](docs/diagnostics.md)) runs R6 with the d
 - **Why those adds are so slow here:** the benchmark's depth profile has only 40 bins (320 bytes, about three cache lines), so every one of about 6×10⁹ adds lands in the same three lines and is serialized, which matches the hot L2 slice in the counters. This is an explanation consistent with the counters, not something measured directly.
 - **A limit on how far it generalizes:** the cost comes from many adds landing on a few lines, and this benchmark's depth profile is coarse (40 bins of 0.01 cm, about one mean free path each). A finer profile would spread the adds over more lines and contend less; that was not measured.
 - **What it does not show:** that any real kernel can reach 0.82 s. The profiles are needed, and the cost of computing them without this serialization is what the next rung measures. The diagnostic is the target, not the result (it is 30 times the 12-thread CPU figure on a different machine, which is context and not a speedup).
+
+### R7: the profiles in shared memory
+
+R7 keeps the depth and radius profiles and stops their adds from serializing: each warp has a private copy of both in shared memory, and each block adds them to the global profiles once, at the end. Design: [`docs/rungs/R7.md`](docs/rungs/R7.md). Record: [`results/gpu-r7-summary.json`](results/gpu-r7-summary.json), the pasted summary of [`notebooks/colab_gpu_r7.ipynb`](notebooks/colab_gpu_r7.ipynb); its profiling output was not pasted, so there are no counters for R7 yet. [`LOG.md`](LOG.md) is measurement-only, so no prediction was recorded.
+
+- **Validation:** all 24 checks pass on rung 7.
+- **Agreement with the CPU on identical photons** (2×10⁶ photons), now **including the depth and radius profiles**, which no earlier GPU check compared: R7 passes, and so does R6, whose profiles are checked here for the first time. The profile gaps are 1.2e-06 and 1.8e-06 for depth (total, and worst cumulative shape) and 1.3e-06 and 6.4e-06 for radius, against limits of 1e-04 and 1e-03 fixed before the run; R6's are the same to nine digits. R_d, T_t and event-count gaps are identical to R6's to every printed digit, and absorbed weight is 0.0034 standard errors from the CPU's.
+- **Throughput**, same session, 4×10⁶ photons, median kernel time of 5 repeats:
+
+| Run | Median kernel time | Million events/s |
+|---|---|---|
+| R6 | 10.052 s | 615.7 |
+| **R7** | **1.961 s** | **3156.4** |
+| R6 without the profile atomics (diagnostic: the target, not a result) | 0.850 s | 7277.3 |
+| **R7 (again)** | **2.016 s** | **3070.6** |
+
+**R7 is 5.1 times faster than R6** (5.0 times on the repeat), for the same 6.19 billion events, and it keeps the profiles. The profiles-off diagnostic sets the bound: R7 cannot be faster than a kernel that skips its work, and it takes 2.3 times the diagnostic's time, closing 88% of the gap between R6 and the diagnostic. Its 3156.4 million events per second is 12.5 times the 12-thread CPU figure on a different machine, which is context, not a speedup.
+
+**What this means** (my reading):
+
+- **The design worked as intended.** Taking the adds off the contended global lines gave most of the gain the ablation said was available, and the profiles stay correct against the CPU.
+- **R7's time no longer looks like a fixed hardware rate.** R6's time was identical to the millisecond across sessions (10.053 s, then 10.052 s), as an atomic unit's rate would be. R7's repeats span 1.5% (against R6's 0.04%) and its second run is 2.8% slower than its first; the diagnostic also moved +3.3% between sessions while R6 did not. Both fit time that now depends on the multiprocessors' clock rather than on one L2 unit. That is a reading of the timings, not a measurement.
+- **Not explained:** why R7 is still 1.11 s above the diagnostic. Candidates, untested: the shared-memory adds of `double` are compare-and-swap loops and lanes of one warp that add to the same bin retry against each other; the flush; and R7 uses more registers than the diagnostic's kernel. The counters of the notebook's profiling step compare R7 with the diagnostic and would say which.
 
 ## Development process
 

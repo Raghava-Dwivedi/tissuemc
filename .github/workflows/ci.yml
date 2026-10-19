@@ -94,6 +94,12 @@ jobs:
             /LDL|STL/ { if ($0 ~ /\[R1(\+0x[0-9a-f]+)?\]/) fixed[fn]++; else dyn[fn]++ }
             /LDL/ {ld[fn]++} /STL/ {st[fn]++}
             END {for (f in seen) printf "%-100s LDL=%d STL=%d fixed=%d dynamic=%d CALL=%d ATOMS(shared)=%d ATOM(global)=%d RED(global)=%d\n", f, ld[f], st[f], fixed[f], dyn[f], call[f], atoms[f], atom[f], red[f]}'
+          # The exact atomic opcodes per kernel: a double add in shared memory is a compare-and-swap
+          # loop (ATOMS.CAS) on this architecture, an integer or float add would be ATOMS.ADD.
+          cuobjdump -sass build-cuda/tissuemc | awk '
+            /Function :/ {fn=$3}
+            match($0, /(ATOMS|ATOM|RED)\.[A-Z0-9.]*/) {ops[fn " " substr($0, RSTART, RLENGTH)]++}
+            END {for (k in ops) printf "OPCODE %-100s x%d\n", k, ops[k]}' | sort
 
   lint:
     name: Format and lint
