@@ -690,9 +690,7 @@ def test_r7_counters_readme_numbers_match_the_saved_digest():
     assert g("lts__throughput.max.pct_of_peak_sustained_elapsed")[1] < 1  # the L2 hot spot is gone
     assert g("launch__occupancy_limit_shared_mem")[1] >= g("launch__occupancy_limit_warps")[1]
     # The README says what it does not establish.
-    assert (
-        "which of the three consequences" in readme and "the most saturated" not in readme or True
-    )
+    assert "which of the three consequences of the loops" in readme
     log = (ROOT / "LOG.md").read_text()
     assert "R7 counters: the cost is the compare-and-swap loops" in log
     assert "The model is a check on the magnitude, not a measurement" in log
