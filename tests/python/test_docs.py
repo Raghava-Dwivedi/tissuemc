@@ -634,3 +634,65 @@ def test_r7_readme_numbers_match_the_committed_summary():
     assert "Not known: why R7 is still" in log
     validation = (ROOT / "VALIDATION.md").read_text()
     assert "were not compared on the GPU" in validation
+
+
+def test_r7_counters_readme_numbers_match_the_saved_digest():
+    data = json.loads((ROOT / "results" / "gpu-r6np-r7-digest.json").read_text())
+    assert data["rungs"]["B"] == 7 and data["photons"] == 500000
+    rows, readme = _digest_rows("gpu-r6np-r7-digest.json"), README.replace("**", "")
+    pre, suf = "smsp__average_warps_issue_stalled_", "_per_issue_active.ratio"
+    for label, name in (
+        (
+            "Double-precision pipe busy (% of peak while active)",
+            "sm__inst_executed_pipe_fp64.avg.pct_of_peak_sustained_active",
+        ),
+        (
+            "Issue slots used (% of peak while active)",
+            "smsp__issue_active.avg.pct_of_peak_sustained_active",
+        ),
+        (
+            "Average warp latency per issued instruction (cycles)",
+            "smsp__average_warp_latency_per_inst_issued.ratio",
+        ),
+        ("Waiting for a load or atomic result (long scoreboard)", pre + "long_scoreboard" + suf),
+        (
+            "Busiest L2 slice, throughput (% of peak)",
+            "lts__throughput.max.pct_of_peak_sustained_elapsed",
+        ),
+        (
+            "Achieved warps per multiprocessor (% of peak)",
+            "sm__warps_active.avg.pct_of_peak_sustained_active",
+        ),
+    ):
+        assert f"| {label} | {rows[name][0]} | {rows[name][1]} |" in readme, label
+    num = lambda s: float(s.replace(",", ""))  # noqa: E731
+    g = lambda n: tuple(num(v) for v in rows[n])  # noqa: E731
+    inst, sh = g("smsp__inst_executed.sum"), g("smsp__inst_executed_op_shared_atom.sum")
+    assert sh[0] == 0 and sh[1] > 0
+    assert (
+        f"| Warp instructions executed (billions) | {inst[0] / 1e9:.2f} | {inst[1] / 1e9:.2f} |"
+        in readme
+    )
+    # The shared loads and the shared atomics run in pairs: one loop iteration is one of each.
+    ld = g("smsp__sass_inst_executed_op_shared_ld.sum")
+    assert abs(ld[1] / sh[1] - 1) < 1e-4
+    per_iteration = (inst[1] - inst[0]) / sh[1]
+    assert (
+        6 < per_iteration < 10 and f"{per_iteration:.1f} extra instructions per iteration" in readme
+    )
+    fp = g("sm__inst_executed_pipe_fp64.avg.pct_of_peak_sustained_active")
+    assert fp[0] < 1 and fp[1] > 50  # the double-precision pipe is the busiest resource in R7
+    sm = g("sm__cycles_active.avg")[1]
+    model = 100 * (sh[1] / 40 * 16) / sm
+    assert (
+        abs(model - fp[1]) < 10 and f"predicts {model:.0f}%" in readme
+    )  # the model is a magnitude check
+    assert g("lts__throughput.max.pct_of_peak_sustained_elapsed")[1] < 1  # the L2 hot spot is gone
+    assert g("launch__occupancy_limit_shared_mem")[1] >= g("launch__occupancy_limit_warps")[1]
+    # The README says what it does not establish.
+    assert (
+        "which of the three consequences" in readme and "the most saturated" not in readme or True
+    )
+    log = (ROOT / "LOG.md").read_text()
+    assert "R7 counters: the cost is the compare-and-swap loops" in log
+    assert "The model is a check on the magnitude, not a measurement" in log

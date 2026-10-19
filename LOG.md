@@ -163,3 +163,20 @@ A hypothesis written after one run is labelled as one, and the next run says whe
 - Not claimed: anything about inputs with other profile sizes. The cost removed comes from this benchmark's 40-bin depth profile.
 - Next: read R7's counters against the diagnostic's (the digest the notebook prints, or the saved profiles in the session) before changing anything.
 
+## R7 counters: the cost is the compare-and-swap loops (recorded 2026-10-18)
+
+*Record:* [`results/gpu-r6np-r7-digest.json`](results/gpu-r6np-r7-digest.json)
+
+**Prediction:** none (measurement-only). This follows the R7 entry, which left the 1.1 s above the target unexplained.
+
+**Result** (every counter, the profiles-off diagnostic against R7, 500,000 photons, locked clocks): duration 0.289 s and 0.606 s; warp instructions 17.85 and 22.99 billion; divergent branch targets 120 and 720 million; shared-memory atomic instructions 0 and 633 million; double-precision pipe 0.24% and 76.77% busy; issue slots used 72.26% and 41.49%; busiest L2 slice 0.33% and 0.16%.
+
+**What the data show and suggest:**
+- Measured: the L2 hot spot is gone (busiest slice 0.16% of peak, against 63.8% for R6). R7's remaining cost is in the multiprocessors.
+- Measured: R7 executes 5.14 billion more warp instructions than the diagnostic (1.29×) and 6× the divergent branch targets. It runs 633 million shared-memory atomic iterations, and the extra instructions divided by the iterations is 8.1 per iteration, a plausible loop body.
+- Derived, approximately: R6 made about 33 million warp-level profile adds (from its own digest, another session), so the loops run about 19 iterations per add. That is what many lanes of a warp adding to the same few bins would cost: they retry against each other in turn.
+- Measured: the double-precision pipe is 76.77% busy while active (the diagnostic 0.24%). A rough model of one double add per iteration at 16 cycles per warp-level add gives 73%. The T4 does double precision at 1/32 of its single rate, so this is the most saturated resource R7 has. The model is a check on the magnitude, not a measurement.
+- Measured: it is not shared-memory capacity (the limit would allow 10 blocks against the warp limit of 8; 97.38% of warp slots are occupied).
+- Not known: which of the loops' three consequences (instructions, double-precision throughput, waiting on atomic results) matters most. They have one cause.
+- Next: remove the retries without changing what is computed, by combining the lanes of a warp that add to the same bin before adding, and judge it by R7's own counters (loop iterations, double-precision pipe, divergent branches) as well as by time.
+

@@ -315,7 +315,33 @@ R7 keeps the depth and radius profiles and stops their adds from serializing: ea
 
 - **The design worked as intended.** Taking the adds off the contended global lines gave most of the gain the ablation said was available, and the profiles stay correct against the CPU.
 - **R7's time no longer looks like a fixed hardware rate.** R6's time was identical to the millisecond across sessions (10.053 s, then 10.052 s), as an atomic unit's rate would be. R7's repeats span 1.5% (against R6's 0.04%) and its second run is 2.8% slower than its first; the diagnostic also moved +3.3% between sessions while R6 did not. Both fit time that now depends on the multiprocessors' clock rather than on one L2 unit. That is a reading of the timings, not a measurement.
-- **Not explained:** why R7 is still 1.11 s above the diagnostic. Candidates, untested: the shared-memory adds of `double` are compare-and-swap loops and lanes of one warp that add to the same bin retry against each other; the flush; and R7 uses more registers than the diagnostic's kernel. The counters of the notebook's profiling step compare R7 with the diagnostic and would say which.
+- **Not explained by the timings alone:** why R7 is still 1.11 s above the diagnostic. Candidates, untested: the shared-memory adds of `double` are compare-and-swap loops and lanes of one warp that add to the same bin retry against each other; the flush; and R7 uses more registers than the diagnostic's kernel. The counters below say which.
+
+#### What R7's counters show
+
+The saved profiles of the profiles-off diagnostic (A, the target) and R7 (B), 500,000 photons, every counter ([`results/gpu-r6np-r7-digest.json`](results/gpu-r6np-r7-digest.json)), say where R7's remaining time goes:
+
+| Counter | Diagnostic | R7 |
+|---|---|---|
+| Kernel duration at locked clocks (seconds) | 0.289 | 0.606 |
+| Warp instructions executed (billions) | 17.85 | 22.99 |
+| Divergent branch targets (millions) | 120 | 720 |
+| Shared-memory atomic instructions (millions) | 0 | 633 |
+| Double-precision pipe busy (% of peak while active) | 0.24 | 76.77 |
+| Issue slots used (% of peak while active) | 72.26 | 41.49 |
+| Average warp latency per issued instruction (cycles) | 10.03 | 18.74 |
+| Waiting for a load or atomic result (long scoreboard) | 0.00 | 8.60 |
+| Busiest L2 slice, throughput (% of peak) | 0.33 | 0.16 |
+| Achieved warps per multiprocessor (% of peak) | 89.03 | 97.38 |
+
+**What the counters say** (my reading):
+
+- **The L2 hot spot is gone.** The busiest L2 slice is at 0.16% of peak, against 63.8% for R6. R7's remaining cost is inside the multiprocessors.
+- **That cost is the compare-and-swap loops.** R7 executes 5.14 billion more warp instructions than the diagnostic (1.29×) and 6 times as many divergent branch targets. It executes 633 million shared-memory atomic instructions, each with one shared load, and 8.1 extra instructions per iteration accounts for the whole difference. R6 made about 33 million warp-level profile adds (from its earlier counters, a different session), so the loops run about 19 iterations per intended add: lanes of a warp that add to the same few bins retry against each other in turn.
+- **The double-precision pipe is the busiest resource R7 has.** It is 76.77% busy while active (the diagnostic: 0.24%), because every loop iteration does a `double` add and the T4 does double precision at 1/32 of its single-precision rate. A rough model (one double add per iteration, 16 cycles per warp-level double add on the T4's two double-precision units per multiprocessor) predicts 73%. The stall breakdown agrees in outline: 46% of the wait is for the atomics' results.
+- **It is not a capacity problem.** Shared memory would allow 10 resident blocks against the 8 the warp limit allows, and 97.38% of the warp slots are occupied.
+
+What the counters do **not** say is which of the three consequences of the loops (the extra instructions, the double-precision throughput, the waiting on atomic results) matters most; they share one cause, and the test is to remove the retries. The way to do that without changing what is computed is to combine the lanes of a warp that add to the same bin before adding.
 
 ## Development process
 
