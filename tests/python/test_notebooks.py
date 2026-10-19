@@ -184,3 +184,11 @@ def test_the_r8_notebook_gates_its_long_steps_and_labels_the_diagnostic():
     profiles = next(s for s in sources if "--full" in s)
     assert profiles.count("--reuse-csv") == 2 and "--no-profiles" not in profiles
     assert "not a result" in "".join(nb["cells"][0]["source"])
+    # A failed run explains itself: the build and the quick check are logged to files, and the
+    # summary carries their tails, so pasting only the summary is enough to diagnose it.
+    assert "results/quick.log" in check and "tail" in check
+    build = next(s for s in sources if "cmake --build build" in s)
+    assert "results/build.log" in build and "BUILD FAILED" in build
+    summary = sources[-1]
+    assert '"diagnostics"' in summary and "quick_check_passed" in summary
+    assert "build_tail" in summary and "quick_check_tail" in summary
