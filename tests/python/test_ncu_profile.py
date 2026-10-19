@@ -192,6 +192,10 @@ def test_the_digest_finds_every_group_in_real_metric_names():
         "sm__cycles_active.max",
         "sm__cycles_active.avg",
         "gpu__time_duration.sum",
+        "smsp__inst_executed_op_shared_atom.sum",
+        "smsp__sass_inst_executed_op_shared_ld.sum",
+        "l1tex__data_pipe_lsu_wavefronts_mem_shared_op_atom.sum",
+        "l1tex__data_bank_conflicts_pipe_lsu_mem_shared_op_atom.sum",
         "launch__occupancy_limit_registers",
         "sm__warps_active.avg.pct_of_peak_sustained_active",
     ]

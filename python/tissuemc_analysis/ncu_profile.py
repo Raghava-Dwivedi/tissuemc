@@ -206,6 +206,14 @@ DIGEST_GROUPS = [
         12,
     ),
     (
+        "Shared memory (R7's per-warp profiles)",
+        r"^smsp__inst_executed_op_shared_atom\.sum$"
+        r"|^smsp__sass_inst_executed_op_shared_(ld|st)\.sum$"
+        r"|^l1tex__data_pipe_lsu_wavefronts_mem_shared(_op_(atom|ld|st))?\.sum$"
+        r"|^l1tex__data_bank_conflicts_pipe_lsu_mem_shared(_op_(atom|ld|st))?\.sum$",
+        10,
+    ),
+    (
         "L2, atomics and SM balance",
         r"^lts__throughput\.(avg|max)\.pct_of_peak_sustained_elapsed$"
         r"|^lts__d_atomic_input_cycles_active\.(avg|max)\.pct_of_peak_sustained_elapsed$"
