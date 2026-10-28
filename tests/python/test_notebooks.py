@@ -192,3 +192,9 @@ def test_the_r8_notebook_gates_its_long_steps_and_labels_the_diagnostic():
     summary = sources[-1]
     assert '"diagnostics"' in summary and "quick_check_passed" in summary
     assert "build_tail" in summary and "quick_check_tail" in summary
+    # A runtime with no GPU is caught at the start and reported in words, not left to fail later.
+    first = sources[0]
+    assert "nvidia-smi -L" in first and "results/gpu.log" in first and "NO GPU" in first
+    assert 'grep -q "GPU 0" results/gpu.log' in check  # the quick check needs a GPU to run at all
+    assert "def verdict" in summary and "this runtime has no GPU" in summary
+    assert '"verdict": verdict()' in summary and '"gpu": tail("gpu.log"' in summary
