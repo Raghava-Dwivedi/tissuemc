@@ -193,8 +193,68 @@ def test_the_r8_notebook_gates_its_long_steps_and_labels_the_diagnostic():
     assert '"diagnostics"' in summary and "quick_check_passed" in summary
     assert "build_tail" in summary and "quick_check_tail" in summary
     # A runtime with no GPU is caught at the start and reported in words, not left to fail later.
-    first = sources[0]
-    assert "nvidia-smi -L" in first and "results/gpu.log" in first and "NO GPU" in first
+    first = next(s for s in sources if "nvidia-smi -L" in s)
+    assert "results/gpu.log" in first and "NO GPU" in first
     assert 'grep -q "GPU 0" results/gpu.log' in check  # the quick check needs a GPU to run at all
     assert "def verdict" in summary and "this runtime has no GPU" in summary
     assert '"verdict": verdict()' in summary and '"gpu": tail("gpu.log"' in summary
+
+
+def _run_setup_cells(nb_path: Path, tmp: Path, gpu: bool) -> Path:
+    """Replay the notebook's directory-sensitive shell lines in order, as Colab would.
+
+    Colab starts in /content and `%cd` moves the session; a file written before the `%cd` lands
+    in a different directory from the one later cells read. Only the lines that create or read
+    `results/` and the GPU log are run (no network, no build); a fake `nvidia-smi` stands in
+    for the device. Returns the directory the session ends in.
+    """
+    import os
+    import subprocess
+
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir()
+    if gpu:
+        smi = bin_dir / "nvidia-smi"
+        smi.write_text(
+            '#!/bin/sh\nif [ "$1" = "-L" ]; then echo "GPU 0: Tesla T4 (UUID: GPU-test)"; '
+            'else echo "Tesla T4, 550.00, 15360 MiB, 1590 MHz"; fi\n'
+        )
+        nvcc = bin_dir / "nvcc"
+        nvcc.write_text('#!/bin/sh\necho "Build cuda_test"\n')
+        smi.chmod(0o755)
+        nvcc.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
+    cwd = tmp / "content"
+    cwd.mkdir()
+    repo = tmp / "content" / "tissuemc"  # what `%cd /content/tissuemc` would reach
+    for src in code_cells(nb_path):
+        if "--photons 200000" in src:  # the quick-check cell: stop before it
+            break
+        for line in src.splitlines():
+            if line.startswith("%cd"):
+                repo.mkdir(exist_ok=True)
+                cwd = repo
+            elif line.startswith("!") and ("nvidia-smi" in line or "mkdir -p results" in line):
+                subprocess.run(["bash", "-c", line[1:]], cwd=cwd, env=env, capture_output=True)
+    return cwd
+
+
+@pytest.mark.parametrize("gpu", [True, False], ids=["with_gpu", "without_gpu"])
+def test_the_r8_gpu_log_is_where_the_quick_check_looks(tmp_path, gpu):
+    """The GPU log has to be in the directory the later cells read.
+
+    A run on a real GPU runtime reported "no GPU" because the log was written before `%cd` and
+    read after it. Replay the cells that move the session and write the log, then run the
+    quick check's own `grep` from wherever the session ended up.
+    """
+    import subprocess
+
+    path = ROOT / "notebooks" / "colab_gpu_r8.ipynb"
+    cwd = _run_setup_cells(path, tmp_path, gpu)
+    check = next(s for s in code_cells(path) if "--photons 200000" in s)
+    grep = next(ln for ln in check.splitlines() if 'grep -q "GPU 0" results/gpu.log' in ln)
+    condition = grep.split("if ", 1)[1].split("; then", 1)[0]
+    found = subprocess.run(["bash", "-c", condition], cwd=cwd, capture_output=True)
+    assert (found.returncode == 0) == gpu
+    # And the summary reads the same log from the same place.
+    assert (cwd / "results" / "gpu.log").exists()
